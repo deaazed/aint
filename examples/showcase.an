@@ -1,0 +1,73 @@
+import math
+import string
+import collections
+
+fn is_divisible(n: Int, d: Int) -> Bool {
+    return (n / d) * d == n
+}
+
+fn has_divisor_from(n: Int, d: Int) -> Bool {
+    if d * d > n {
+        return false
+    }
+    if is_divisible(n, d) {
+        return true
+    }
+    return has_divisor_from(n, d + 1)
+}
+
+fn is_prime(n: Int) -> Bool {
+    if n < 2 {
+        return false
+    }
+    return has_divisor_from(n, 2) == false
+}
+
+fn count_primes(numbers: List<Int>, index: Int, found: Int) -> Int {
+    if index < collections_length(numbers) {
+        if is_prime(numbers[index]) {
+            return count_primes(numbers, index + 1, found + 1)
+        } else {
+            return count_primes(numbers, index + 1, found)
+        }
+    } else {
+        return found
+    }
+}
+
+fn collatz_steps(n: Int, steps: Int) -> Int {
+    if n == 1 {
+        return steps
+    }
+    if is_divisible(n, 2) {
+        return collatz_steps(n / 2, steps + 1)
+    } else {
+        return collatz_steps(3 * n + 1, steps + 1)
+    }
+}
+
+let candidates = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 17, 19, 20, 23, 29, 97, 100]
+let prime_count = count_primes(candidates, 0, 0)
+print(prime_count)
+
+let steps = collatz_steps(27, 0)
+print(steps)
+print(is_prime(steps))
+
+let a = 3.7
+let b = -2.4
+print(math_floor(a))
+print(math_ceil(a))
+print(math_round(a))
+print(math_abs(b))
+print(math_max(a, b))
+print(math_min(a, b))
+print(math_pow(2.0, 8.0))
+print(math_sqrt(math_pow(2.0, 8.0)))
+
+let sentence = "  AINT can already do quite a lot  "
+let trimmed = string_trim(sentence)
+print(trimmed)
+print(string_length(trimmed))
+print(string_to_upper(trimmed))
+print(string_contains(trimmed, "AINT"))

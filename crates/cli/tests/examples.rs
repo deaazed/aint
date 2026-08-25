@@ -43,6 +43,31 @@ fn stdlib_an_prints_and_exits_zero() {
 }
 
 #[test]
+fn showcase_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("showcase.an"));
+    assert!(output.status.success());
+
+    let expected = "\
+11
+111
+false
+3
+4
+4
+2.4
+3.7
+-2.4
+256
+16
+AINT can already do quite a lot
+31
+AINT CAN ALREADY DO QUITE A LOT
+true
+";
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[test]
 fn a_type_error_is_rejected_before_anything_runs() {
     let path = std::env::temp_dir().join(format!("aint_cli_type_error_{}.an", std::process::id()));
     std::fs::write(
