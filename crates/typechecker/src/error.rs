@@ -46,6 +46,10 @@ pub enum TypeError {
         expected: Type,
         span: Span,
     },
+    UnknownModule {
+        name: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -60,7 +64,8 @@ impl TypeError {
             | TypeError::Mismatch { span, .. }
             | TypeError::ReturnTypeMismatch { span, .. }
             | TypeError::ReturnOutsideFunction { span }
-            | TypeError::MissingReturn { span, .. } => *span,
+            | TypeError::MissingReturn { span, .. }
+            | TypeError::UnknownModule { span, .. } => *span,
         }
     }
 }
@@ -121,6 +126,9 @@ impl fmt::Display for TypeError {
                 "{}: `{name}` is declared to return {expected} but doesn't return on every path",
                 span.start
             ),
+            TypeError::UnknownModule { name, span } => {
+                write!(f, "{}: unknown module `{name}`", span.start)
+            }
         }
     }
 }

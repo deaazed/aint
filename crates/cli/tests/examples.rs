@@ -33,6 +33,16 @@ fn fibonacci_an_prints_and_exits_zero() {
 }
 
 #[test]
+fn stdlib_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("stdlib.an"));
+    assert!(output.status.success());
+
+    let total: f64 = 4.0 + 8.0 + 15.0 + 16.0 + 23.0 + 42.0;
+    let expected = format!("{total}\n{}\nHELLO, AINT\ntrue\n", total.sqrt());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+#[test]
 fn a_type_error_is_rejected_before_anything_runs() {
     let path = std::env::temp_dir().join(format!("aint_cli_type_error_{}.an", std::process::id()));
     std::fs::write(

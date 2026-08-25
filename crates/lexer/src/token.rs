@@ -18,6 +18,7 @@ pub enum TokenKind {
     Else,
     True,
     False,
+    Import,
 
     // Operators
     Plus,
@@ -35,6 +36,8 @@ pub enum TokenKind {
     RightParen,
     LeftBrace,
     RightBrace,
+    LeftBracket,
+    RightBracket,
     Comma,
     Colon,
     Arrow,
@@ -56,6 +59,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Else => write!(f, "`else`"),
             TokenKind::True => write!(f, "`true`"),
             TokenKind::False => write!(f, "`false`"),
+            TokenKind::Import => write!(f, "`import`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -69,6 +73,8 @@ impl fmt::Display for TokenKind {
             TokenKind::RightParen => write!(f, "`)`"),
             TokenKind::LeftBrace => write!(f, "`{{`"),
             TokenKind::RightBrace => write!(f, "`}}`"),
+            TokenKind::LeftBracket => write!(f, "`[`"),
+            TokenKind::RightBracket => write!(f, "`]`"),
             TokenKind::Comma => write!(f, "`,`"),
             TokenKind::Colon => write!(f, "`:`"),
             TokenKind::Arrow => write!(f, "`->`"),
@@ -99,6 +105,7 @@ pub(crate) fn keyword(word: &str) -> Option<TokenKind> {
         "else" => TokenKind::Else,
         "true" => TokenKind::True,
         "false" => TokenKind::False,
+        "import" => TokenKind::Import,
         _ => return None,
     })
 }

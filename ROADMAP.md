@@ -50,7 +50,7 @@ prints something. No bytecode, no LLVM, no AI yet.
 Static, not dynamic — AI involvement later is not a reason to weaken
 this.
 
-## 06 — Modules + standard library
+## 06 — Modules + standard library — done
 
 `import math`, `import http`, `import json`. Enough of `io`, `math`,
 `collections`, `string`, `json`, `time` to write real (non-AI) programs.

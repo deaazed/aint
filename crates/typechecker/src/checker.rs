@@ -3,11 +3,15 @@ use std::collections::HashMap;
 use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, Type, UnaryOp};
 
 use crate::error::TypeError;
+use crate::stdlib;
 
 #[derive(Debug, Clone)]
 enum Binding {
     Variable(Type),
     Function(FunctionSignature),
+    /// `collections_length`: the one stdlib function genuinely
+    /// polymorphic over `List<T>`. See `stdlib.rs`'s doc comment.
+    PolymorphicListFunction,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +167,33 @@ impl TypeChecker {
                 self.check_expr(expr)?;
                 Ok(())
             }
+            StmtKind::Import(module) => {
+                if module == "collections" {
+                    self.define(
+                        "collections_length".to_string(),
+                        Binding::PolymorphicListFunction,
+                    );
+                    return Ok(());
+                }
+                match stdlib::module_functions(module) {
+                    Some(functions) => {
+                        for (name, sig) in functions {
+                            self.define(
+                                name.to_string(),
+                                Binding::Function(FunctionSignature {
+                                    params: sig.params,
+                                    return_type: sig.return_type,
+                                }),
+                            );
+                        }
+                        Ok(())
+                    }
+                    None => Err(TypeError::UnknownModule {
+                        name: module.clone(),
+                        span: stmt.span,
+                    }),
+                }
+            }
         }
     }
 
@@ -181,10 +212,12 @@ impl TypeChecker {
             ExprKind::Bool(_) => Ok(Type::Bool),
             ExprKind::Identifier(name) => match self.lookup(name) {
                 Some(Binding::Variable(ty)) => Ok(ty.clone()),
-                Some(Binding::Function(_)) => Err(TypeError::Mismatch {
-                    message: format!("`{name}` is a function; call it with `{name}(...)`"),
-                    span: expr.span,
-                }),
+                Some(Binding::Function(_) | Binding::PolymorphicListFunction) => {
+                    Err(TypeError::Mismatch {
+                        message: format!("`{name}` is a function; call it with `{name}(...)`"),
+                        span: expr.span,
+                    })
+                }
                 None => Err(TypeError::UndefinedVariable {
                     name: name.clone(),
                     span: expr.span,
@@ -208,6 +241,44 @@ impl TypeChecker {
                 check_binary(*op, &l, &r, expr.span)
             }
             ExprKind::Call { callee, args } => self.check_call(callee, args, expr.span),
+            ExprKind::List(elements) => {
+                if elements.is_empty() {
+                    return Err(TypeError::Mismatch {
+                        message: "cannot infer the type of an empty list literal".to_string(),
+                        span: expr.span,
+                    });
+                }
+                let first_ty = self.check_expr(&elements[0])?;
+                for element in &elements[1..] {
+                    let ty = self.check_expr(element)?;
+                    if ty != first_ty {
+                        return Err(TypeError::Mismatch {
+                            message: format!(
+                                "list elements must all have the same type; found {first_ty} and {ty}"
+                            ),
+                            span: element.span,
+                        });
+                    }
+                }
+                Ok(Type::List(Box::new(first_ty)))
+            }
+            ExprKind::Index { object, index } => {
+                let object_ty = self.check_expr(object)?;
+                let index_ty = self.check_expr(index)?;
+                if index_ty != Type::Int {
+                    return Err(TypeError::Mismatch {
+                        message: format!("list index must be Int, found {index_ty}"),
+                        span: index.span,
+                    });
+                }
+                match object_ty {
+                    Type::List(elem_ty) => Ok(*elem_ty),
+                    other => Err(TypeError::Mismatch {
+                        message: format!("cannot index into {other}"),
+                        span: object.span,
+                    }),
+                }
+            }
         }
     }
 
@@ -240,6 +311,25 @@ impl TypeChecker {
 
         let sig = match self.lookup(name) {
             Some(Binding::Function(sig)) => sig.clone(),
+            Some(Binding::PolymorphicListFunction) => {
+                // `collections_length`, currently the only member.
+                if args.len() != 1 {
+                    return Err(TypeError::ArityMismatch {
+                        name: name.clone(),
+                        expected: 1,
+                        found: args.len(),
+                        span,
+                    });
+                }
+                let arg_ty = self.check_expr(&args[0])?;
+                return match arg_ty {
+                    Type::List(_) => Ok(Type::Int),
+                    other => Err(TypeError::Mismatch {
+                        message: format!("`{name}` expects a List, found {other}"),
+                        span: args[0].span,
+                    }),
+                };
+            }
             Some(Binding::Variable(_)) => {
                 return Err(TypeError::NotAFunction {
                     name: name.clone(),
@@ -479,5 +569,72 @@ mod tests {
         // Mirrors the interpreter's own block-scoping test.
         let err = check("if true { let x = 1 }\nprint(x)").unwrap_err();
         assert!(matches!(err, TypeError::UndefinedVariable { .. }));
+    }
+
+    // --- lists and indexing ------------------------------------------
+
+    #[test]
+    fn list_literal_infers_element_type() {
+        assert!(check("let xs = [1, 2, 3]\nprint(xs[0])").is_ok());
+    }
+
+    #[test]
+    fn empty_list_literal_is_a_type_error() {
+        let err = check("let xs = []").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn mismatched_list_element_types_is_a_type_error() {
+        let err = check("let xs = [1, \"x\"]").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn indexing_a_non_list_is_a_type_error() {
+        let err = check("let x = 1\nprint(x[0])").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn indexing_with_a_non_int_is_a_type_error() {
+        let err = check("let xs = [1, 2, 3]\nprint(xs[\"a\"])").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    // --- import / stdlib -----------------------------------------------
+
+    #[test]
+    fn stdlib_function_undefined_before_import() {
+        let err = check("print(math_sqrt(4.0))").unwrap_err();
+        assert!(matches!(err, TypeError::UndefinedFunction { .. }));
+    }
+
+    #[test]
+    fn math_sqrt_type_checks_after_import() {
+        assert!(check("import math\nprint(math_sqrt(4.0))").is_ok());
+    }
+
+    #[test]
+    fn stdlib_function_still_checks_argument_types() {
+        let err = check("import math\nmath_sqrt(\"x\")").unwrap_err();
+        assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn collections_length_is_polymorphic_over_list_element_type() {
+        assert!(
+            check("import collections\nlet xs = [1, 2, 3]\nprint(collections_length(xs))").is_ok()
+        );
+        assert!(check(
+            "import collections\nlet xs = [\"a\", \"b\"]\nprint(collections_length(xs))"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn unknown_module_is_a_positioned_error() {
+        let err = check("import frobnicate").unwrap_err();
+        assert!(matches!(err, TypeError::UnknownModule { .. }));
     }
 }

@@ -92,6 +92,7 @@ impl Parser {
             TokenKind::If => self.parse_if_statement(),
             TokenKind::Fn => self.parse_fn_statement(),
             TokenKind::Return => self.parse_return_statement(),
+            TokenKind::Import => self.parse_import_statement(),
             _ => self.parse_expr_statement(),
         }
     }
@@ -103,6 +104,13 @@ impl Parser {
         let value = self.parse_expr()?;
         let span = Span::new(let_token.span.start, value.span.end);
         Ok(Stmt::new(StmtKind::Let { name, value }, span))
+    }
+
+    fn parse_import_statement(&mut self) -> Result<Stmt, ParseError> {
+        let import_token = self.expect(TokenKind::Import, "`import`")?;
+        let (module, module_span) = self.expect_identifier()?;
+        let span = Span::new(import_token.span.start, module_span.end);
+        Ok(Stmt::new(StmtKind::Import(module), span))
     }
 
     fn parse_fn_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -302,13 +310,22 @@ impl Parser {
                 span,
             ));
         }
-        self.parse_call()
+        self.parse_postfix()
     }
 
-    fn parse_call(&mut self) -> Result<Expr, ParseError> {
+    /// Parses a primary expression followed by zero or more postfix
+    /// operations: calls (`expr(args)`) and indexing (`expr[index]`),
+    /// left-associative and freely mixable (`f()[0]`, `list[0]()`).
+    fn parse_postfix(&mut self) -> Result<Expr, ParseError> {
         let mut expr = self.parse_primary()?;
-        while self.check(&TokenKind::LeftParen) {
-            expr = self.finish_call(expr)?;
+        loop {
+            if self.check(&TokenKind::LeftParen) {
+                expr = self.finish_call(expr)?;
+            } else if self.check(&TokenKind::LeftBracket) {
+                expr = self.finish_index(expr)?;
+            } else {
+                break;
+            }
         }
         Ok(expr)
     }
@@ -330,6 +347,20 @@ impl Parser {
             ExprKind::Call {
                 callee: Box::new(callee),
                 args,
+            },
+            span,
+        ))
+    }
+
+    fn finish_index(&mut self, object: Expr) -> Result<Expr, ParseError> {
+        self.expect(TokenKind::LeftBracket, "`[`")?;
+        let index = self.parse_expr()?;
+        let close = self.expect(TokenKind::RightBracket, "`]`")?;
+        let span = Span::new(object.span.start, close.span.end);
+        Ok(Expr::new(
+            ExprKind::Index {
+                object: Box::new(object),
+                index: Box::new(index),
             },
             span,
         ))
@@ -367,6 +398,21 @@ impl Parser {
                 let expr = self.parse_expr()?;
                 self.expect(TokenKind::RightParen, "`)`")?;
                 Ok(expr)
+            }
+            TokenKind::LeftBracket => {
+                self.advance();
+                let mut elements = Vec::new();
+                if !self.check(&TokenKind::RightBracket) {
+                    loop {
+                        elements.push(self.parse_expr()?);
+                        if !self.matches(&TokenKind::Comma) {
+                            break;
+                        }
+                    }
+                }
+                let close = self.expect(TokenKind::RightBracket, "`]`")?;
+                let span = Span::new(token.span.start, close.span.end);
+                Ok(Expr::new(ExprKind::List(elements), span))
             }
             _ => Err(ParseError::Unexpected {
                 expected: "expression".to_string(),
@@ -415,6 +461,13 @@ mod tests {
                     let args_str: Vec<String> = args.iter().map(describe_expr).collect();
                     format!("({callee_str} {})", args_str.join(" "))
                 }
+            }
+            ExprKind::List(elements) => {
+                let items: Vec<String> = elements.iter().map(describe_expr).collect();
+                format!("[{}]", items.join(" "))
+            }
+            ExprKind::Index { object, index } => {
+                format!("(index {} {})", describe_expr(object), describe_expr(index))
             }
         }
     }
@@ -650,6 +703,41 @@ mod tests {
             StmtKind::Return(expr) => assert_eq!(describe_expr(&expr), "42"),
             other => panic!("expected Return, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_import_statement() {
+        let stmt = parse_one_stmt("import math");
+        match stmt.kind {
+            StmtKind::Import(module) => assert_eq!(module, "math"),
+            other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_list_literal() {
+        assert_eq!(expr_str("[1, 2, 3]"), "[1 2 3]");
+        assert_eq!(expr_str("[]"), "[]");
+    }
+
+    #[test]
+    fn parses_indexing() {
+        assert_eq!(expr_str("list[0]"), "(index list 0)");
+    }
+
+    #[test]
+    fn parses_chained_indexing() {
+        assert_eq!(expr_str("list[0][1]"), "(index (index list 0) 1)");
+    }
+
+    #[test]
+    fn parses_index_with_arbitrary_expression() {
+        assert_eq!(expr_str("list[i + 1]"), "(index list (+ i 1))");
+    }
+
+    #[test]
+    fn indexing_and_calls_compose() {
+        assert_eq!(expr_str("f()[0]"), "(index (f) 0)");
     }
 
     // --- errors ---------------------------------------------------------

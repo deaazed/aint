@@ -31,6 +31,7 @@ pub enum StmtKind {
         body: Block,
     },
     Return(Expr),
+    Import(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]

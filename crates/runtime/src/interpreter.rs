@@ -6,6 +6,7 @@ use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, U
 
 use crate::environment::Environment;
 use crate::error::RuntimeError;
+use crate::stdlib;
 use crate::value::{Function, NativeFunction, Value};
 
 /// Signals whether a `return` unwound out of the statement/block just
@@ -132,6 +133,19 @@ impl<W: Write> Interpreter<W> {
                 self.eval_expr(expr, env)?;
                 Ok(Flow::Normal)
             }
+            StmtKind::Import(module) => match stdlib::module_bindings(module) {
+                Some(bindings) => {
+                    let mut env = env.borrow_mut();
+                    for (name, native) in bindings {
+                        env.define(name, Value::Native(native));
+                    }
+                    Ok(Flow::Normal)
+                }
+                None => Err(RuntimeError::UnknownModule {
+                    name: module.clone(),
+                    span: stmt.span,
+                }),
+            },
         }
     }
 
@@ -179,6 +193,48 @@ impl<W: Write> Interpreter<W> {
                 }
                 self.call(callee_value, arg_values, expr.span)
             }
+            ExprKind::List(elements) => {
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    values.push(self.eval_expr(element, env)?);
+                }
+                Ok(Value::List(values))
+            }
+            ExprKind::Index { object, index } => {
+                let object_value = self.eval_expr(object, env)?;
+                let index_value = self.eval_expr(index, env)?;
+
+                let items = match object_value {
+                    Value::List(items) => items,
+                    other => {
+                        return Err(RuntimeError::TypeMismatch {
+                            message: format!("cannot index into a {}", other.type_name()),
+                            span: expr.span,
+                        });
+                    }
+                };
+                let idx = match index_value {
+                    Value::Int(n) => n,
+                    other => {
+                        return Err(RuntimeError::TypeMismatch {
+                            message: format!(
+                                "list index must be an Int, found {}",
+                                other.type_name()
+                            ),
+                            span: expr.span,
+                        });
+                    }
+                };
+
+                if idx < 0 || idx as usize >= items.len() {
+                    return Err(RuntimeError::IndexOutOfBounds {
+                        index: idx,
+                        len: items.len(),
+                        span: expr.span,
+                    });
+                }
+                Ok(items[idx as usize].clone())
+            }
         }
     }
 
@@ -221,6 +277,7 @@ impl<W: Write> Interpreter<W> {
                 })?;
                 Ok(Value::Unit)
             }
+            Value::Native(native) => stdlib::call(native, args, span),
             other => Err(RuntimeError::NotCallable {
                 type_name: other.type_name(),
                 span,
@@ -399,5 +456,128 @@ mod tests {
     fn print_wrong_arity_is_arity_mismatch() {
         let err = run_expect_err("print(1, 2)");
         assert!(matches!(err, RuntimeError::ArityMismatch { .. }));
+    }
+
+    // --- lists and indexing --------------------------------------------
+
+    #[test]
+    fn list_literal_and_indexing() {
+        assert_eq!(run_capturing("print([10, 20, 30][1])"), "20\n");
+    }
+
+    #[test]
+    fn list_display_format() {
+        assert_eq!(run_capturing("print([1, 2, 3])"), "[1, 2, 3]\n");
+    }
+
+    #[test]
+    fn errors_on_negative_index() {
+        let err = run_expect_err("print([1, 2, 3][-1])");
+        assert!(matches!(
+            err,
+            RuntimeError::IndexOutOfBounds {
+                index: -1,
+                len: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn errors_on_index_past_the_end() {
+        let err = run_expect_err("print([1, 2, 3][3])");
+        assert!(matches!(
+            err,
+            RuntimeError::IndexOutOfBounds {
+                index: 3,
+                len: 3,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn recursive_list_processing_via_index_and_length() {
+        // Exactly the pattern examples/stdlib.an relies on: no loops in
+        // the language, so recursion + indexing + length is how a list
+        // gets summed.
+        assert_eq!(
+            run_capturing(
+                "import collections\n\
+                 fn sum(xs: List<Float>, i: Int) -> Float {\n\
+                     if i < collections_length(xs) {\n\
+                         return xs[i] + sum(xs, i + 1)\n\
+                     } else {\n\
+                         return 0.0\n\
+                     }\n\
+                 }\n\
+                 print(sum([1.0, 2.0, 3.0], 0))"
+            ),
+            "6\n"
+        );
+    }
+
+    // --- import / stdlib ------------------------------------------------
+
+    #[test]
+    fn errors_on_unknown_module() {
+        let err = run_expect_err("import frobnicate");
+        assert!(matches!(err, RuntimeError::UnknownModule { .. }));
+    }
+
+    #[test]
+    fn math_functions() {
+        assert_eq!(
+            run_capturing(
+                "import math\n\
+                 print(math_sqrt(9.0))\n\
+                 print(math_pow(2.0, 10.0))\n\
+                 print(math_floor(1.9))\n\
+                 print(math_ceil(1.1))\n\
+                 print(math_round(1.5))\n\
+                 print(math_abs(-3.5))\n\
+                 print(math_min(2.0, 5.0))\n\
+                 print(math_max(2.0, 5.0))"
+            ),
+            "3\n1024\n1\n2\n2\n3.5\n2\n5\n"
+        );
+    }
+
+    #[test]
+    fn string_functions() {
+        assert_eq!(
+            run_capturing(
+                "import string\n\
+                 print(string_length(\"hello\"))\n\
+                 print(string_to_upper(\"hello\"))\n\
+                 print(string_to_lower(\"HELLO\"))\n\
+                 print(string_trim(\"  hi  \"))\n\
+                 print(string_contains(\"hello\", \"ell\"))\n\
+                 print(string_concat(\"foo\", \"bar\"))"
+            ),
+            "5\nHELLO\nhello\nhi\ntrue\nfoobar\n"
+        );
+    }
+
+    #[test]
+    fn time_now_seconds_returns_a_plausible_timestamp() {
+        // Deterministic on purpose: never assert the exact value, just
+        // that it looks like a real, current Unix timestamp.
+        assert_eq!(
+            run_capturing("import time\nprint(time_now_seconds() > 1700000000)"),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn collections_length_works_for_any_element_type() {
+        assert_eq!(
+            run_capturing(
+                "import collections\n\
+                 print(collections_length([1, 2, 3]))\n\
+                 print(collections_length([\"a\", \"b\"]))"
+            ),
+            "3\n2\n"
+        );
     }
 }

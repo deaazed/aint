@@ -9,6 +9,7 @@
 
 mod checker;
 mod error;
+mod stdlib;
 
 use aint_ast::Program;
 

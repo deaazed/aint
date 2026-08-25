@@ -1,0 +1,23 @@
+import math
+import string
+import time
+import collections
+
+fn sum(numbers: List<Float>, index: Int) -> Float {
+    if index < collections_length(numbers) {
+        return numbers[index] + sum(numbers, index + 1)
+    } else {
+        return 0.0
+    }
+}
+
+let numbers = [4.0, 8.0, 15.0, 16.0, 23.0, 42.0]
+let total = sum(numbers, 0)
+print(total)
+print(math_sqrt(total))
+
+let greeting = string_to_upper("hello, aint")
+print(greeting)
+
+let started = time_now_seconds()
+print(started > 0)

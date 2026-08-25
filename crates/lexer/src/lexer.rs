@@ -238,6 +238,8 @@ impl<'src> Lexer<'src> {
             ')' => TokenKind::RightParen,
             '{' => TokenKind::LeftBrace,
             '}' => TokenKind::RightBrace,
+            '[' => TokenKind::LeftBracket,
+            ']' => TokenKind::RightBracket,
             ',' => TokenKind::Comma,
             ':' => TokenKind::Colon,
             _ => {
@@ -303,7 +305,7 @@ mod tests {
     #[test]
     fn keywords_are_not_identifiers() {
         assert_eq!(
-            kinds("let fn return if else true false"),
+            kinds("let fn return if else true false import"),
             vec![
                 TokenKind::Let,
                 TokenKind::Fn,
@@ -312,6 +314,7 @@ mod tests {
                 TokenKind::Else,
                 TokenKind::True,
                 TokenKind::False,
+                TokenKind::Import,
                 TokenKind::Eof,
             ]
         );
@@ -368,12 +371,14 @@ mod tests {
     #[test]
     fn lexes_each_punctuation_token() {
         assert_eq!(
-            kinds("( ) { } , : ->"),
+            kinds("( ) { } [ ] , : ->"),
             vec![
                 TokenKind::LeftParen,
                 TokenKind::RightParen,
                 TokenKind::LeftBrace,
                 TokenKind::RightBrace,
+                TokenKind::LeftBracket,
+                TokenKind::RightBracket,
                 TokenKind::Comma,
                 TokenKind::Colon,
                 TokenKind::Arrow,

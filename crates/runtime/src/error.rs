@@ -32,6 +32,15 @@ pub enum RuntimeError {
     ReturnOutsideFunction {
         span: Span,
     },
+    UnknownModule {
+        name: String,
+        span: Span,
+    },
+    IndexOutOfBounds {
+        index: i64,
+        len: usize,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -44,7 +53,9 @@ impl RuntimeError {
             | RuntimeError::TypeMismatch { span, .. }
             | RuntimeError::DivisionByZero { span }
             | RuntimeError::Io { span, .. }
-            | RuntimeError::ReturnOutsideFunction { span } => *span,
+            | RuntimeError::ReturnOutsideFunction { span }
+            | RuntimeError::UnknownModule { span, .. }
+            | RuntimeError::IndexOutOfBounds { span, .. } => *span,
         }
     }
 }
@@ -74,6 +85,14 @@ impl fmt::Display for RuntimeError {
             RuntimeError::ReturnOutsideFunction { span } => {
                 write!(f, "{}: `return` outside a function", span.start)
             }
+            RuntimeError::UnknownModule { name, span } => {
+                write!(f, "{}: unknown module `{name}`", span.start)
+            }
+            RuntimeError::IndexOutOfBounds { index, len, span } => write!(
+                f,
+                "{}: index {index} out of bounds for a list of length {len}",
+                span.start
+            ),
         }
     }
 }

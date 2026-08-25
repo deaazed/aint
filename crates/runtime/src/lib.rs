@@ -9,6 +9,7 @@
 mod environment;
 mod error;
 mod interpreter;
+mod stdlib;
 mod value;
 
 pub use error::RuntimeError;
