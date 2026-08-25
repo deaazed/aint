@@ -88,6 +88,8 @@ impl Parser {
         match self.current().kind {
             TokenKind::Let => self.parse_let_statement(),
             TokenKind::If => self.parse_if_statement(),
+            TokenKind::Fn => self.parse_fn_statement(),
+            TokenKind::Return => self.parse_return_statement(),
             _ => self.parse_expr_statement(),
         }
     }
@@ -99,6 +101,33 @@ impl Parser {
         let value = self.parse_expr()?;
         let span = Span::new(let_token.span.start, value.span.end);
         Ok(Stmt::new(StmtKind::Let { name, value }, span))
+    }
+
+    fn parse_fn_statement(&mut self) -> Result<Stmt, ParseError> {
+        let fn_token = self.expect(TokenKind::Fn, "`fn`")?;
+        let (name, _) = self.expect_identifier()?;
+        self.expect(TokenKind::LeftParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let (param, _) = self.expect_identifier()?;
+                params.push(param);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen, "`)`")?;
+        let body = self.parse_block()?;
+        let span = Span::new(fn_token.span.start, body.span.end);
+        Ok(Stmt::new(StmtKind::Fn { name, params, body }, span))
+    }
+
+    fn parse_return_statement(&mut self) -> Result<Stmt, ParseError> {
+        let return_token = self.expect(TokenKind::Return, "`return`")?;
+        let value = self.parse_expr()?;
+        let span = Span::new(return_token.span.start, value.span.end);
+        Ok(Stmt::new(StmtKind::Return(value), span))
     }
 
     fn parse_if_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -490,6 +519,37 @@ mod tests {
     fn program_needs_no_separators_between_statements() {
         let program = parse_source("let x = 1\nlet y = 2").expect("should parse");
         assert_eq!(program.statements.len(), 2);
+    }
+
+    #[test]
+    fn parses_fn_statement() {
+        let stmt = parse_one_stmt("fn add(a, b) { return a + b }");
+        match stmt.kind {
+            StmtKind::Fn { name, params, body } => {
+                assert_eq!(name, "add");
+                assert_eq!(params, vec!["a".to_string(), "b".to_string()]);
+                assert_eq!(body.statements.len(), 1);
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_fn_with_no_params() {
+        let stmt = parse_one_stmt("fn hello() { print(x) }");
+        match stmt.kind {
+            StmtKind::Fn { params, .. } => assert!(params.is_empty()),
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_return_statement() {
+        let stmt = parse_one_stmt("return 42");
+        match stmt.kind {
+            StmtKind::Return(expr) => assert_eq!(describe_expr(&expr), "42"),
+            other => panic!("expected Return, got {other:?}"),
+        }
     }
 
     // --- errors ---------------------------------------------------------

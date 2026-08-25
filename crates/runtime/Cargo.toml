@@ -8,3 +8,10 @@ description = "Tree-walk interpreter and execution engine for AINT: deterministi
 
 [dependencies]
 aint-ast = { path = "../ast" }
+
+[dev-dependencies]
+# Only for tests: makes it possible to write test programs as AINT
+# source text instead of hand-building AST trees. The interpreter
+# itself only ever depends on aint-ast, matching the pipeline direction
+# in docs/ARCHITECTURE.md.
+aint-parser = { path = "../parser" }

@@ -38,7 +38,7 @@ should tolerate the AI-specific syntax (`infer`, `tool`, `Distribution`)
 added later without a rewrite — don't hardcode AI syntax into the lexer
 or parser in a way that fights that.
 
-## 04 — Tree-walk interpreter
+## 04 — Tree-walk interpreter — done
 
 `let`, arithmetic, functions, `return`, recursion (fibonacci-level
 programs) running end to end: `aint run examples/hello.an` actually

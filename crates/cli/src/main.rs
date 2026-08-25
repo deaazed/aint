@@ -1,10 +1,11 @@
 //! `aint` — the command-line entry point for the AINT toolchain.
 //!
-//! Only `aint run <file>` exists right now, and it doesn't run anything
-//! yet: the lexer, parser, and interpreter land in milestones 02-04.
-//! This command exists so the CLI shape is fixed early and every later
-//! milestone has a real place to plug into. See ROADMAP.md.
+//! Only `aint run <file>` exists right now: it lexes, parses, and
+//! interprets a `.an` file end to end. This command exists so the CLI
+//! shape is fixed early and every later milestone has a real place to
+//! plug into. See ROADMAP.md.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -39,16 +40,28 @@ fn main() -> ExitCode {
 }
 
 fn run(path: &Path) -> ExitCode {
-    if !path.exists() {
-        eprintln!("error: no such file: {}", path.display());
-        return ExitCode::FAILURE;
-    }
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(err) => {
+            eprintln!("error: could not read {}: {err}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
 
-    eprintln!(
-        "error: the AINT interpreter isn't implemented yet.\n\
-         Lexing, parsing, and evaluation land in milestones 02-04 (see ROADMAP.md).\n\
-         `{}` was found but can't be run yet.",
-        path.display()
-    );
-    ExitCode::FAILURE
+    let program = match aint_parser::parse_source(&source) {
+        Ok(program) => program,
+        Err(err) => {
+            eprintln!("{}:{}", path.display(), err);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let interpreter = aint_runtime::Interpreter::new();
+    match interpreter.run(&program) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{}:{}", path.display(), err);
+            ExitCode::FAILURE
+        }
+    }
 }

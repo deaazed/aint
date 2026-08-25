@@ -24,6 +24,12 @@ pub enum StmtKind {
         else_branch: Option<Block>,
     },
     Expr(Expr),
+    Fn {
+        name: String,
+        params: Vec<String>,
+        body: Block,
+    },
+    Return(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

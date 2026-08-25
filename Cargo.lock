@@ -46,6 +46,7 @@ name = "aint-runtime"
 version = "0.1.0"
 dependencies = [
  "aint-ast",
+ "aint-parser",
 ]
 
 [[package]]
