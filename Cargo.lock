@@ -29,6 +29,9 @@ dependencies = [
 [[package]]
 name = "aint-lexer"
 version = "0.1.0"
+dependencies = [
+ "aint-ast",
+]
 
 [[package]]
 name = "aint-parser"

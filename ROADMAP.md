@@ -16,8 +16,8 @@ Status legend: `done`, `in progress`, not marked = not started.
 
 ## 00 — Language thesis — done
 
-Write down what AINT is and isn't before any code exists, so an AI coding
-agent (or a human moving fast) has something to be held to. Delivered as
+Write down what AINT is and isn't before any code exists, so there's
+something to be held to once things are moving fast. Delivered as
 `docs/LANGUAGE_DESIGN.md`.
 
 ## 01 — Project bootstrap — done

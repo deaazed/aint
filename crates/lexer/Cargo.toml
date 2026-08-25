@@ -7,3 +7,4 @@ publish.workspace = true
 description = "Tokenizer for AINT source files."
 
 [dependencies]
+aint-ast = { path = "../ast" }

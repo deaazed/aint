@@ -37,8 +37,8 @@ Concretely, that means:
 
 ## What AINT is not
 
-Stated explicitly because an AI coding agent (or a human, mid-milestone)
-will otherwise drift the project toward the path of least resistance:
+Stated explicitly because it's easy to drift toward the path of least
+resistance mid-milestone without a clear line to check against:
 
 - **Not** a Python transpiler.
 - **Not** a prompt-templating DSL.
