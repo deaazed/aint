@@ -8,3 +8,9 @@ description = "Static type checker for AINT, including the Distribution<T>/Infer
 
 [dependencies]
 aint-ast = { path = "../ast" }
+
+[dev-dependencies]
+# Only for tests: lets test programs be written as AINT source text
+# instead of hand-built AST trees. Production code only depends on
+# aint-ast, matching docs/ARCHITECTURE.md's pipeline direction.
+aint-parser = { path = "../parser" }

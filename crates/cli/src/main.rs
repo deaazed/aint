@@ -1,9 +1,10 @@
 //! `aint` — the command-line entry point for the AINT toolchain.
 //!
-//! Only `aint run <file>` exists right now: it lexes, parses, and
-//! interprets a `.an` file end to end. This command exists so the CLI
-//! shape is fixed early and every later milestone has a real place to
-//! plug into. See ROADMAP.md.
+//! Only `aint run <file>` exists right now: it lexes, parses,
+//! type-checks, and interprets a `.an` file end to end. A type error
+//! stops the program before the interpreter ever runs it. This command
+//! exists so the CLI shape is fixed early and every later milestone has
+//! a real place to plug into. See ROADMAP.md.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -55,6 +56,11 @@ fn run(path: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    if let Err(err) = aint_typechecker::check_program(&program) {
+        eprintln!("{}:{}", path.display(), err);
+        return ExitCode::FAILURE;
+    }
 
     let interpreter = aint_runtime::Interpreter::new();
     match interpreter.run(&program) {

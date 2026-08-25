@@ -54,6 +54,7 @@ name = "aint-typechecker"
 version = "0.1.0"
 dependencies = [
  "aint-ast",
+ "aint-parser",
 ]
 
 [[package]]

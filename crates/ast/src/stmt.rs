@@ -1,4 +1,4 @@
-use crate::{Expr, Span};
+use crate::{Expr, Span, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Stmt {
@@ -26,10 +26,17 @@ pub enum StmtKind {
     Expr(Expr),
     Fn {
         name: String,
-        params: Vec<String>,
+        params: Vec<Param>,
+        return_type: Type,
         body: Block,
     },
     Return(Expr),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Param {
+    pub name: String,
+    pub ty: Type,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -1,4 +1,6 @@
-use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, UnaryOp};
+use aint_ast::{
+    BinaryOp, Block, Expr, ExprKind, Param, Program, Span, Stmt, StmtKind, Type, UnaryOp,
+};
 use aint_lexer::{tokenize, Token, TokenKind};
 
 use crate::error::ParseError;
@@ -110,17 +112,68 @@ impl Parser {
         let mut params = Vec::new();
         if !self.check(&TokenKind::RightParen) {
             loop {
-                let (param, _) = self.expect_identifier()?;
-                params.push(param);
+                let (param_name, _) = self.expect_identifier()?;
+                self.expect(TokenKind::Colon, "`:`")?;
+                let (ty, _) = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                });
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }
             }
         }
         self.expect(TokenKind::RightParen, "`)`")?;
+        self.expect(TokenKind::Arrow, "`->`")?;
+        let (return_type, _) = self.parse_type()?;
         let body = self.parse_block()?;
         let span = Span::new(fn_token.span.start, body.span.end);
-        Ok(Stmt::new(StmtKind::Fn { name, params, body }, span))
+        Ok(Stmt::new(
+            StmtKind::Fn {
+                name,
+                params,
+                return_type,
+                body,
+            },
+            span,
+        ))
+    }
+
+    /// Parses a type name from an identifier token — `Int`, `Float`,
+    /// `Bool`, `String`, `Unit`, or `List<T>`/`Option<T>` reusing the
+    /// existing `<`/`>` operator tokens for the generic brackets. An
+    /// identifier that isn't one of these is a parse error: see
+    /// docs/milestones/05-core-type-system/SPEC.md for why unknown type
+    /// names are caught here rather than deferred to the type checker.
+    fn parse_type(&mut self) -> Result<(Type, Span), ParseError> {
+        let (name, span) = self.expect_identifier()?;
+        let ty = match name.as_str() {
+            "Int" => Type::Int,
+            "Float" => Type::Float,
+            "Bool" => Type::Bool,
+            "String" => Type::String,
+            "Unit" => Type::Unit,
+            "List" => {
+                self.expect(TokenKind::Less, "`<`")?;
+                let (inner, _) = self.parse_type()?;
+                self.expect(TokenKind::Greater, "`>`")?;
+                Type::List(Box::new(inner))
+            }
+            "Option" => {
+                self.expect(TokenKind::Less, "`<`")?;
+                let (inner, _) = self.parse_type()?;
+                self.expect(TokenKind::Greater, "`>`")?;
+                Type::Option(Box::new(inner))
+            }
+            _ => {
+                return Err(ParseError::Unexpected {
+                    expected: "a type".to_string(),
+                    found: Token::new(TokenKind::Identifier(name), span),
+                });
+            }
+        };
+        Ok((ty, span))
     }
 
     fn parse_return_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -523,11 +576,29 @@ mod tests {
 
     #[test]
     fn parses_fn_statement() {
-        let stmt = parse_one_stmt("fn add(a, b) { return a + b }");
+        let stmt = parse_one_stmt("fn add(a: Int, b: Int) -> Int { return a + b }");
         match stmt.kind {
-            StmtKind::Fn { name, params, body } => {
+            StmtKind::Fn {
+                name,
+                params,
+                return_type,
+                body,
+            } => {
                 assert_eq!(name, "add");
-                assert_eq!(params, vec!["a".to_string(), "b".to_string()]);
+                assert_eq!(
+                    params,
+                    vec![
+                        Param {
+                            name: "a".to_string(),
+                            ty: Type::Int
+                        },
+                        Param {
+                            name: "b".to_string(),
+                            ty: Type::Int
+                        },
+                    ]
+                );
+                assert_eq!(return_type, Type::Int);
                 assert_eq!(body.statements.len(), 1);
             }
             other => panic!("expected Fn, got {other:?}"),
@@ -536,11 +607,40 @@ mod tests {
 
     #[test]
     fn parses_fn_with_no_params() {
-        let stmt = parse_one_stmt("fn hello() { print(x) }");
+        let stmt = parse_one_stmt("fn hello() -> Unit { print(x) }");
         match stmt.kind {
-            StmtKind::Fn { params, .. } => assert!(params.is_empty()),
+            StmtKind::Fn {
+                params,
+                return_type,
+                ..
+            } => {
+                assert!(params.is_empty());
+                assert_eq!(return_type, Type::Unit);
+            }
             other => panic!("expected Fn, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_list_and_option_types() {
+        let stmt = parse_one_stmt("fn f(x: List<Int>) -> Option<String> { return x }");
+        match stmt.kind {
+            StmtKind::Fn {
+                params,
+                return_type,
+                ..
+            } => {
+                assert_eq!(params[0].ty, Type::List(Box::new(Type::Int)));
+                assert_eq!(return_type, Type::Option(Box::new(Type::String)));
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn errors_on_unknown_type_name() {
+        let err = parse_source("fn f(x: Frobnicate) -> Int { return 1 }").unwrap_err();
+        assert!(matches!(err, ParseError::Unexpected { .. }));
     }
 
     #[test]

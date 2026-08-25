@@ -91,10 +91,18 @@ impl<W: Write> Interpreter<W> {
                 env.borrow_mut().define(name.clone(), v);
                 Ok(Flow::Normal)
             }
-            StmtKind::Fn { name, params, body } => {
+            StmtKind::Fn {
+                name,
+                params,
+                body,
+                return_type: _,
+            } => {
+                // The type checker already validated this signature by
+                // the time a real `aint run` gets here; the interpreter
+                // only needs param names to bind argument values.
                 let function = Value::Function(Rc::new(Function {
                     name: name.clone(),
-                    params: params.clone(),
+                    params: params.iter().map(|p| p.name.clone()).collect(),
                     body: body.clone(),
                 }));
                 env.borrow_mut().define(name.clone(), function);
@@ -329,7 +337,7 @@ mod tests {
     fn function_call_and_recursion() {
         assert_eq!(
             run_capturing(
-                "fn fibonacci(n) {\n\
+                "fn fibonacci(n: Int) -> Int {\n\
                      if n < 2 { return n }\n\
                      return fibonacci(n - 1) + fibonacci(n - 2)\n\
                  }\n\
@@ -343,7 +351,7 @@ mod tests {
     fn function_with_no_return_yields_unit_and_does_not_print_it() {
         // Just confirms falling off the end of a function body doesn't
         // panic or error; nothing here actually prints the Unit result.
-        assert_eq!(run_capturing("fn noop() { let x = 1 }\nnoop()"), "");
+        assert_eq!(run_capturing("fn noop() -> Unit { let x = 1 }\nnoop()"), "");
     }
 
     #[test]
@@ -365,7 +373,7 @@ mod tests {
 
     #[test]
     fn errors_on_arity_mismatch() {
-        let err = run_expect_err("fn add(a, b) { return a + b }\nadd(1)");
+        let err = run_expect_err("fn add(a: Int, b: Int) -> Int { return a + b }\nadd(1)");
         assert!(matches!(err, RuntimeError::ArityMismatch { .. }));
     }
 

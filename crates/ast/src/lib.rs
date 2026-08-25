@@ -13,7 +13,9 @@
 mod expr;
 mod span;
 mod stmt;
+mod ty;
 
 pub use expr::{BinaryOp, Expr, ExprKind, UnaryOp};
 pub use span::{Position, Span};
-pub use stmt::{Block, Program, Stmt, StmtKind};
+pub use stmt::{Block, Param, Program, Stmt, StmtKind};
+pub use ty::Type;

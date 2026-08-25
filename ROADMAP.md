@@ -44,7 +44,7 @@ or parser in a way that fights that.
 programs) running end to end: `aint run examples/hello.an` actually
 prints something. No bytecode, no LLVM, no AI yet.
 
-## 05 — Core type system
+## 05 — Core type system — done
 
 `Int`, `Float`, `Bool`, `String`, `Unit`, then `List<T>`, `Option<T>`.
 Static, not dynamic — AI involvement later is not a reason to weaken
