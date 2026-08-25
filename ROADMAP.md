@@ -25,13 +25,13 @@ something to be held to once things are moving fast. Delivered as
 Cargo workspace, crate skeleton, `aint --version` working. Delivered as
 this repository's current state.
 
-## 02 — Lexer
+## 02 — Lexer — done
 
 Tokenize `.an` source: identifiers, literals, keywords, operators,
 punctuation. Real error positions from the start —
 `file.an:4:17: expected expression`, not `syntax error`.
 
-## 03 — Parser + AST
+## 03 — Parser + AST — done
 
 Parse `let`, expressions, `if`, function calls into an AST. Architecture
 should tolerate the AI-specific syntax (`infer`, `tool`, `Distribution`)
