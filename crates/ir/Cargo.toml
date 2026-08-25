@@ -1,0 +1,10 @@
+[package]
+name = "aint-ir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "AINT Intermediate Representation (AIR): lowers the typed AST into a form the runtime can execute and optimize."
+
+[dependencies]
+aint-ast = { path = "../ast" }

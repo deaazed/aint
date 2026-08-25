@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ast",
+    "crates/lexer",
+    "crates/parser",
+    "crates/typechecker",
+    "crates/ir",
+    "crates/runtime",
+    "crates/cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[profile.dev]
+debug = true
+
+[profile.release]
+lto = true
+codegen-units = 1

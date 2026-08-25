@@ -1,0 +1,11 @@
+[package]
+name = "aint-parser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Recursive-descent parser producing the AINT AST."
+
+[dependencies]
+aint-ast = { path = "../ast" }
+aint-lexer = { path = "../lexer" }

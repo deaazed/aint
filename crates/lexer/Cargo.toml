@@ -1,0 +1,9 @@
+[package]
+name = "aint-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Tokenizer for AINT source files."
+
+[dependencies]

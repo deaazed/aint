@@ -1,0 +1,21 @@
+[package]
+name = "aint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Command-line tool for the AINT programming language: aint run / build / test / fmt."
+default-run = "aint"
+
+[[bin]]
+name = "aint"
+path = "src/main.rs"
+
+[dependencies]
+aint-ast = { path = "../ast" }
+aint-lexer = { path = "../lexer" }
+aint-parser = { path = "../parser" }
+aint-typechecker = { path = "../typechecker" }
+aint-ir = { path = "../ir" }
+aint-runtime = { path = "../runtime" }
+clap = { version = "4", features = ["derive"] }

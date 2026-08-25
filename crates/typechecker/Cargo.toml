@@ -1,0 +1,10 @@
+[package]
+name = "aint-typechecker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Static type checker for AINT, including the Distribution<T>/Inference<T> uncertainty boundary."
+
+[dependencies]
+aint-ast = { path = "../ast" }
