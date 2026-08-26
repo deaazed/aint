@@ -61,7 +61,7 @@ Not a hundred libraries — just enough.
 `async fn` / `await` on Tokio. Needed before inference and tools exist,
 since both are inherently asynchronous.
 
-## 08 — First AI primitive
+## 08 — First AI primitive — done
 
 `infer sentiment(text: String) -> Sentiment` and an `Inference<T>` type,
 backed by a `Model` trait with a `MockModel` implementation from day

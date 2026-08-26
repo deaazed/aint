@@ -8,8 +8,9 @@ use async_recursion::async_recursion;
 
 use crate::environment::Environment;
 use crate::error::RuntimeError;
+use crate::model::{InferenceRequest, MockModel, Model};
 use crate::stdlib;
-use crate::value::{Function, NativeFunction, Task, Value};
+use crate::value::{Function, InferenceFn, NativeFunction, PendingInference, Task, Value};
 
 /// Signals whether a `return` unwound out of the statement/block just
 /// executed. Rust has no exceptions, so this is the tree-walk
@@ -33,25 +34,39 @@ enum Flow {
 /// it. See `docs/milestones/07-async-concurrency/SPEC.md` for why this
 /// is a single-threaded runtime with no `tokio::spawn`, and why the
 /// mutually recursive methods below are `#[async_recursion(?Send)]`.
-pub struct Interpreter<W: Write = io::Stdout> {
+///
+/// Generic over `M: Model` (milestone 08) so the interpreter can run
+/// against a real model later without changing anything here — only
+/// `MockModel` exists today, and it's the default, so every pre-08 call
+/// site (`Interpreter::new()`, `Interpreter::with_output(...)`) keeps
+/// compiling unchanged. See
+/// `docs/milestones/08-first-ai-primitive/SPEC.md`.
+pub struct Interpreter<W: Write = io::Stdout, M: Model = MockModel> {
     globals: Rc<RefCell<Environment>>,
     output: RefCell<W>,
+    model: M,
 }
 
-impl Interpreter<io::Stdout> {
+impl Interpreter<io::Stdout, MockModel> {
     pub fn new() -> Self {
         Self::with_output(io::stdout())
     }
 }
 
-impl Default for Interpreter<io::Stdout> {
+impl Default for Interpreter<io::Stdout, MockModel> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<W: Write> Interpreter<W> {
+impl<W: Write> Interpreter<W, MockModel> {
     pub fn with_output(output: W) -> Self {
+        Self::with_output_and_model(output, MockModel::new())
+    }
+}
+
+impl<W: Write, M: Model> Interpreter<W, M> {
+    pub fn with_output_and_model(output: W, model: M) -> Self {
         let globals = Environment::new();
         globals
             .borrow_mut()
@@ -59,6 +74,7 @@ impl<W: Write> Interpreter<W> {
         Self {
             globals,
             output: RefCell::new(output),
+            model,
         }
     }
 
@@ -124,6 +140,22 @@ impl<W: Write> Interpreter<W> {
                     is_async: *is_async,
                 }));
                 env.borrow_mut().define(name.clone(), function);
+                Ok(Flow::Normal)
+            }
+            StmtKind::Infer {
+                name,
+                params,
+                return_type: _,
+            } => {
+                // Same reasoning as `StmtKind::Fn` above: the type
+                // checker already validated this signature, so the
+                // interpreter only needs param names — there's no body
+                // at all, unlike `Fn`.
+                let infer_fn = Value::InferenceFn(Rc::new(InferenceFn {
+                    name: name.clone(),
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                }));
+                env.borrow_mut().define(name.clone(), infer_fn);
                 Ok(Flow::Normal)
             }
             StmtKind::Return(value) => {
@@ -257,6 +289,7 @@ impl<W: Write> Interpreter<W> {
                 let value = self.eval_expr(inner, env).await?;
                 match value {
                     Value::Task(task) => self.eval_await(&task, expr.span).await,
+                    Value::Inference(pending) => self.eval_inference(&pending, expr.span).await,
                     other => Err(RuntimeError::TypeMismatch {
                         message: format!("cannot await a {}", other.type_name()),
                         span: expr.span,
@@ -315,6 +348,22 @@ impl<W: Write> Interpreter<W> {
                     stdlib::call(native, args, span)
                 }
             }
+            Value::InferenceFn(infer_fn) => {
+                if infer_fn.params.len() != args.len() {
+                    return Err(RuntimeError::ArityMismatch {
+                        name: infer_fn.name.clone(),
+                        expected: infer_fn.params.len(),
+                        found: args.len(),
+                        span,
+                    });
+                }
+                // Deferred, not run: exactly like `Value::Task` above —
+                // nothing happens until this is awaited.
+                Ok(Value::Inference(Rc::new(PendingInference {
+                    function: infer_fn.name.clone(),
+                    args,
+                })))
+            }
             other => Err(RuntimeError::NotCallable {
                 type_name: other.type_name(),
                 span,
@@ -352,6 +401,23 @@ impl<W: Write> Interpreter<W> {
                 self.run_async_native(*native, args.clone(), span).await
             }
         }
+    }
+
+    /// Actually runs the deferred computation behind a
+    /// `Value::Inference` — sends it to this interpreter's `Model`. The
+    /// only place `self.model` is ever touched.
+    async fn eval_inference(
+        &self,
+        pending: &PendingInference,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        self.model
+            .infer(InferenceRequest {
+                function: pending.function.clone(),
+                args: pending.args.clone(),
+                span,
+            })
+            .await
     }
 
     async fn run_async_native(
@@ -774,5 +840,93 @@ mod tests {
             elapsed >= std::time::Duration::from_millis(25),
             "expected at least ~30ms to have actually elapsed from a real sleep, got {elapsed:?}"
         );
+    }
+
+    // --- infer / Model ----------------------------------------------
+
+    /// Takes a *builder* for the model, not the model itself: a
+    /// `MockModel` holding a mocked `Value` isn't `Send` any more than
+    /// `Interpreter` is (`Value` holds `Rc` throughout), so it has to be
+    /// constructed inside the big-stack closure too, not captured from
+    /// outside it.
+    fn run_capturing_with_model(
+        src: &'static str,
+        build_model: impl FnOnce() -> crate::model::MockModel + Send + 'static,
+    ) -> String {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(src).expect("should parse");
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), build_model());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            String::from_utf8(interpreter.into_output()).expect("output should be valid utf8")
+        })
+    }
+
+    #[test]
+    fn calling_an_infer_fn_without_await_does_not_touch_the_model() {
+        // An unconfigured MockModel would error if this ran. It
+        // shouldn't - nothing awaits it, same as an unawaited Task.
+        assert_eq!(
+            run_capturing_with_model(
+                "infer is_positive(text: String) -> Bool\n\
+                 let _pending = is_positive(\"x\")\n\
+                 print(1)",
+                crate::model::MockModel::new,
+            ),
+            "1\n"
+        );
+    }
+
+    #[test]
+    fn awaiting_an_infer_call_returns_the_mocked_value() {
+        assert_eq!(
+            run_capturing_with_model(
+                "infer is_positive(text: String) -> Bool\n\
+                 print(await is_positive(\"great product\"))",
+                || crate::model::MockModel::new().mock("is_positive", Value::Bool(true)),
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn awaiting_an_unconfigured_infer_call_is_a_clear_model_error() {
+        // `Interpreter` holds `Rc` and isn't `Send` - built inside the
+        // closure, same rule as every other big-stack test here.
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "infer is_positive(text: String) -> Bool\n\
+                 await is_positive(\"x\")",
+            )
+            .expect("should parse");
+            let interpreter =
+                Interpreter::with_output_and_model(Vec::new(), crate::model::MockModel::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::ModelError { .. }));
+    }
+
+    #[test]
+    fn default_interpreter_uses_an_empty_mock_model() {
+        // `Interpreter::with_output` (the pre-08 constructor, still used
+        // everywhere else in this file) keeps compiling and behaving
+        // exactly as before - it just happens to default to a MockModel
+        // with nothing configured.
+        let err = run_expect_err(
+            "infer greeting() -> String\n\
+             await greeting()",
+        );
+        assert!(matches!(err, RuntimeError::ModelError { .. }));
     }
 }

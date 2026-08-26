@@ -33,6 +33,15 @@ pub enum StmtKind {
     },
     Return(Expr),
     Import(String),
+    /// A signature-only declaration: `infer name(params) -> Type`, no
+    /// body. The implementation is external (a model), not AINT source
+    /// — see `docs/milestones/08-first-ai-primitive/SPEC.md` for why
+    /// this doesn't reuse `Fn`'s shape.
+    Infer {
+        name: String,
+        params: Vec<Param>,
+        return_type: Type,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

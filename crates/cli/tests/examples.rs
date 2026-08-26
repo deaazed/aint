@@ -98,3 +98,34 @@ fn a_type_error_is_rejected_before_anything_runs() {
         "expected the argument-type-mismatch message on stderr, got: {stderr}"
     );
 }
+
+/// Milestone 08's honest gap, verified through the real binary: `aint
+/// run` has no AINT-level way to configure a mock response yet (that's
+/// milestone 15), and no real model backend yet (milestone 16) — so
+/// awaiting an `infer` call fails clearly instead of guessing an
+/// answer. See `docs/milestones/08-first-ai-primitive/SPEC.md`.
+#[test]
+fn awaiting_an_unconfigured_infer_call_fails_clearly_through_the_real_binary() {
+    let path = std::env::temp_dir().join(format!("aint_cli_infer_{}.an", std::process::id()));
+    std::fs::write(
+        &path,
+        "infer is_positive(text: String) -> Bool\n\
+         print(await is_positive(\"great product\"))\n",
+    )
+    .expect("failed to write a temporary .an file");
+
+    let output = run_aint(path.to_str().expect("temp path should be utf8"));
+    std::fs::remove_file(&path).ok();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stdout.is_empty(),
+        "expected no stdout output, since the model call fails before print runs; got: {:?}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("no mock response configured for `is_positive`"),
+        "expected the model-error message on stderr, got: {stderr}"
+    );
+}

@@ -41,6 +41,13 @@ pub enum RuntimeError {
         len: usize,
         span: Span,
     },
+    /// A [`crate::Model`] couldn't answer an `infer` call — for
+    /// `MockModel`, this means nothing was configured for that function
+    /// name. See `docs/milestones/08-first-ai-primitive/SPEC.md`.
+    ModelError {
+        message: String,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -55,7 +62,8 @@ impl RuntimeError {
             | RuntimeError::Io { span, .. }
             | RuntimeError::ReturnOutsideFunction { span }
             | RuntimeError::UnknownModule { span, .. }
-            | RuntimeError::IndexOutOfBounds { span, .. } => *span,
+            | RuntimeError::IndexOutOfBounds { span, .. }
+            | RuntimeError::ModelError { span, .. } => *span,
         }
     }
 }
@@ -93,6 +101,9 @@ impl fmt::Display for RuntimeError {
                 "{}: index {index} out of bounds for a list of length {len}",
                 span.start
             ),
+            RuntimeError::ModelError { message, span } => {
+                write!(f, "{}: model error: {message}", span.start)
+            }
         }
     }
 }

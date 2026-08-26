@@ -101,6 +101,7 @@ impl Parser {
             }
             TokenKind::Return => self.parse_return_statement(),
             TokenKind::Import => self.parse_import_statement(),
+            TokenKind::Infer => self.parse_infer_statement(),
             _ => self.parse_expr_statement(),
         }
     }
@@ -154,6 +155,43 @@ impl Parser {
                 return_type,
                 body,
                 is_async,
+            },
+            span,
+        ))
+    }
+
+    /// Parses `infer name(params) -> Type` — deliberately no body, see
+    /// `docs/milestones/08-first-ai-primitive/SPEC.md`. Shares its
+    /// parameter-list and return-type syntax with `parse_fn_body`, but
+    /// isn't merged with it since there's no block to parse afterward.
+    fn parse_infer_statement(&mut self) -> Result<Stmt, ParseError> {
+        let infer_token = self.expect(TokenKind::Infer, "`infer`")?;
+        let (name, _) = self.expect_identifier()?;
+        self.expect(TokenKind::LeftParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let (param_name, _) = self.expect_identifier()?;
+                self.expect(TokenKind::Colon, "`:`")?;
+                let (ty, _) = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                });
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen, "`)`")?;
+        self.expect(TokenKind::Arrow, "`->`")?;
+        let (return_type, return_span) = self.parse_type()?;
+        let span = Span::new(infer_token.span.start, return_span.end);
+        Ok(Stmt::new(
+            StmtKind::Infer {
+                name,
+                params,
+                return_type,
             },
             span,
         ))
@@ -738,6 +776,38 @@ mod tests {
         match stmt.kind {
             StmtKind::Return(expr) => assert_eq!(describe_expr(&expr), "42"),
             other => panic!("expected Return, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_infer_statement() {
+        let stmt = parse_one_stmt("infer is_positive(text: String) -> Bool");
+        match stmt.kind {
+            StmtKind::Infer {
+                name,
+                params,
+                return_type,
+            } => {
+                assert_eq!(name, "is_positive");
+                assert_eq!(
+                    params,
+                    vec![Param {
+                        name: "text".to_string(),
+                        ty: Type::String,
+                    }]
+                );
+                assert_eq!(return_type, Type::Bool);
+            }
+            other => panic!("expected Infer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_infer_statement_with_no_params() {
+        let stmt = parse_one_stmt("infer greeting() -> String");
+        match stmt.kind {
+            StmtKind::Infer { params, .. } => assert!(params.is_empty()),
+            other => panic!("expected Infer, got {other:?}"),
         }
     }
 

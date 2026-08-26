@@ -14,6 +14,14 @@ pub enum Type {
     /// computed by the type checker at the call site of an async
     /// function. See `docs/milestones/07-async-concurrency/SPEC.md`.
     Task(Box<Type>),
+    /// The type of an unawaited call to an `infer`-declared function.
+    /// Never written as source syntax, same as `Task<T>` — computed by
+    /// the type checker at the call site. Kept a distinct type from
+    /// `Task<T>` rather than an alias, since this is where
+    /// inference-specific metadata (model, tokens, latency, trace)
+    /// attaches in later milestones. See
+    /// `docs/milestones/08-first-ai-primitive/SPEC.md`.
+    Inference(Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -27,6 +35,7 @@ impl fmt::Display for Type {
             Type::List(inner) => write!(f, "List<{inner}>"),
             Type::Option(inner) => write!(f, "Option<{inner}>"),
             Type::Task(inner) => write!(f, "Task<{inner}>"),
+            Type::Inference(inner) => write!(f, "Inference<{inner}>"),
         }
     }
 }

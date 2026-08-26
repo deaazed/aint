@@ -18,7 +18,19 @@ enum Binding {
 struct FunctionSignature {
     params: Vec<Type>,
     return_type: Type,
-    is_async: bool,
+    mode: CallMode,
+}
+
+/// What a call-expression's type is, on top of the signature's declared
+/// `return_type`: itself for a plain `fn`, `Task<return_type>` for an
+/// `async fn`, `Inference<return_type>` for an `infer` declaration.
+/// Replaces a plain `is_async: bool` now that there are three modes,
+/// not two — see `docs/milestones/08-first-ai-primitive/SPEC.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CallMode {
+    Sync,
+    Async,
+    Infer,
 }
 
 /// Single-pass static type checker over the AST from `aint-ast`.
@@ -51,18 +63,35 @@ impl TypeChecker {
         // body, so forward references and mutual/self recursion between
         // top-level functions type-check regardless of source order.
         for stmt in &program.statements {
-            if let StmtKind::Fn {
-                name,
-                params,
-                return_type,
-                is_async,
-                ..
-            } = &stmt.kind
-            {
-                self.define(
-                    name.clone(),
-                    Binding::Function(signature(params, return_type, *is_async)),
-                );
+            match &stmt.kind {
+                StmtKind::Fn {
+                    name,
+                    params,
+                    return_type,
+                    is_async,
+                    ..
+                } => {
+                    let mode = if *is_async {
+                        CallMode::Async
+                    } else {
+                        CallMode::Sync
+                    };
+                    self.define(
+                        name.clone(),
+                        Binding::Function(signature(params, return_type, mode)),
+                    );
+                }
+                StmtKind::Infer {
+                    name,
+                    params,
+                    return_type,
+                } => {
+                    self.define(
+                        name.clone(),
+                        Binding::Function(signature(params, return_type, CallMode::Infer)),
+                    );
+                }
+                _ => {}
             }
         }
 
@@ -109,9 +138,14 @@ impl TypeChecker {
                 // bound above); the only place a block-nested `fn` gets
                 // bound at all, so it's callable within its own block
                 // the same way a `let` would be.
+                let mode = if *is_async {
+                    CallMode::Async
+                } else {
+                    CallMode::Sync
+                };
                 self.define(
                     name.clone(),
-                    Binding::Function(signature(params, return_type, *is_async)),
+                    Binding::Function(signature(params, return_type, mode)),
                 );
 
                 self.push_scope();
@@ -130,6 +164,22 @@ impl TypeChecker {
                         span: body.span,
                     });
                 }
+                Ok(())
+            }
+            StmtKind::Infer {
+                name,
+                params,
+                return_type,
+            } => {
+                // Redundant for a hoisted top-level `infer` (already
+                // bound above), same reasoning as `Fn`'s redundant
+                // define — the only place a block-nested `infer` gets
+                // bound at all. No body to check, no scope, no
+                // missing-return analysis: there's nothing to walk.
+                self.define(
+                    name.clone(),
+                    Binding::Function(signature(params, return_type, CallMode::Infer)),
+                );
                 Ok(())
             }
             StmtKind::Return(value) => {
@@ -181,12 +231,17 @@ impl TypeChecker {
                 match stdlib::module_functions(module) {
                     Some(functions) => {
                         for (name, sig) in functions {
+                            let mode = if sig.is_async {
+                                CallMode::Async
+                            } else {
+                                CallMode::Sync
+                            };
                             self.define(
                                 name.to_string(),
                                 Binding::Function(FunctionSignature {
                                     params: sig.params,
                                     return_type: sig.return_type,
-                                    is_async: sig.is_async,
+                                    mode,
                                 }),
                             );
                         }
@@ -287,8 +342,9 @@ impl TypeChecker {
                 let ty = self.check_expr(inner)?;
                 match ty {
                     Type::Task(inner_ty) => Ok(*inner_ty),
+                    Type::Inference(inner_ty) => Ok(*inner_ty),
                     other => Err(TypeError::Mismatch {
-                        message: format!("cannot await {other}; expected a Task"),
+                        message: format!("cannot await {other}; expected a Task or an Inference"),
                         span: inner.span,
                     }),
                 }
@@ -380,19 +436,19 @@ impl TypeChecker {
             }
         }
 
-        if sig.is_async {
-            Ok(Type::Task(Box::new(sig.return_type)))
-        } else {
-            Ok(sig.return_type)
+        match sig.mode {
+            CallMode::Sync => Ok(sig.return_type),
+            CallMode::Async => Ok(Type::Task(Box::new(sig.return_type))),
+            CallMode::Infer => Ok(Type::Inference(Box::new(sig.return_type))),
         }
     }
 }
 
-fn signature(params: &[aint_ast::Param], return_type: &Type, is_async: bool) -> FunctionSignature {
+fn signature(params: &[aint_ast::Param], return_type: &Type, mode: CallMode) -> FunctionSignature {
     FunctionSignature {
         params: params.iter().map(|p| p.ty.clone()).collect(),
         return_type: return_type.clone(),
-        is_async,
+        mode,
     }
 }
 
@@ -702,5 +758,55 @@ mod tests {
     fn async_fn_still_needs_to_return_on_every_path() {
         let err = check("async fn f() -> Int { let x = 1 }").unwrap_err();
         assert!(matches!(err, TypeError::MissingReturn { .. }));
+    }
+
+    // --- infer -------------------------------------------------------
+
+    #[test]
+    fn calling_an_infer_fn_without_await_yields_an_inference() {
+        // If the call-expression's type were Bool instead of
+        // Inference<Bool>, this `if` would type-check; it must not.
+        let err = check(
+            "infer is_positive(text: String) -> Bool\n\
+             if is_positive(\"great\") { print(1) }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn awaiting_an_infer_call_yields_the_declared_return_type() {
+        assert!(check(
+            "infer is_positive(text: String) -> Bool\n\
+             if await is_positive(\"great\") { print(1) }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn infer_call_still_checks_argument_types_and_arity() {
+        let err = check(
+            "infer is_positive(text: String) -> Bool\n\
+             await is_positive(1)",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));
+
+        let err = check(
+            "infer is_positive(text: String) -> Bool\n\
+             await is_positive(\"a\", \"b\")",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::ArityMismatch { .. }));
+    }
+
+    #[test]
+    fn infer_fn_can_be_called_before_its_declaration() {
+        // Same forward-reference hoisting as top-level `fn`.
+        assert!(check(
+            "fn f() -> Bool { return await is_positive(\"x\") }\n\
+             infer is_positive(text: String) -> Bool"
+        )
+        .is_ok());
     }
 }
