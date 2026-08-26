@@ -1,0 +1,21 @@
+import time
+
+async fn slow_double(n: Int) -> Int {
+    await time_sleep_ms(20)
+    return n * 2
+}
+
+async fn slow_square(n: Int) -> Int {
+    await time_sleep_ms(20)
+    return n * n
+}
+
+let doubled = await slow_double(21)
+let squared = await slow_square(6)
+print(doubled)
+print(squared)
+
+// Calling an async function without awaiting it never runs its body -
+// nothing happens here at all, `pending` is just an unresolved Task.
+let pending = slow_double(1000)
+print("done")

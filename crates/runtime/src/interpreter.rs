@@ -1,13 +1,15 @@
 use std::cell::RefCell;
 use std::io::{self, Write};
 use std::rc::Rc;
+use std::time::Duration;
 
 use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, UnaryOp};
+use async_recursion::async_recursion;
 
 use crate::environment::Environment;
 use crate::error::RuntimeError;
 use crate::stdlib;
-use crate::value::{Function, NativeFunction, Value};
+use crate::value::{Function, NativeFunction, Task, Value};
 
 /// Signals whether a `return` unwound out of the statement/block just
 /// executed. Rust has no exceptions, so this is the tree-walk
@@ -24,6 +26,13 @@ enum Flow {
 /// wrote (`Interpreter::with_output(Vec::new())` then `.into_output()`)
 /// instead of asserting against real stdout. `Interpreter::new()` is
 /// the `io::Stdout`-backed default the CLI uses.
+///
+/// Every evaluation method is `async fn`, driven by a Tokio runtime
+/// (milestone 07) — `await` can appear anywhere an expression can, so
+/// the whole call graph has to be async, not just the pieces that use
+/// it. See `docs/milestones/07-async-concurrency/SPEC.md` for why this
+/// is a single-threaded runtime with no `tokio::spawn`, and why the
+/// mutually recursive methods below are `#[async_recursion(?Send)]`.
 pub struct Interpreter<W: Write = io::Stdout> {
     globals: Rc<RefCell<Environment>>,
     output: RefCell<W>,
@@ -58,10 +67,10 @@ impl<W: Write> Interpreter<W> {
         self.output.into_inner()
     }
 
-    pub fn run(&self, program: &Program) -> Result<(), RuntimeError> {
+    pub async fn run(&self, program: &Program) -> Result<(), RuntimeError> {
         let env = Rc::clone(&self.globals);
         for stmt in &program.statements {
-            match self.exec_stmt(stmt, &env)? {
+            match self.exec_stmt(stmt, &env).await? {
                 Flow::Normal => {}
                 Flow::Return(_) => {
                     return Err(RuntimeError::ReturnOutsideFunction { span: stmt.span });
@@ -71,13 +80,14 @@ impl<W: Write> Interpreter<W> {
         Ok(())
     }
 
-    fn exec_block(
+    #[async_recursion(?Send)]
+    async fn exec_block(
         &self,
         block: &Block,
         env: &Rc<RefCell<Environment>>,
     ) -> Result<Flow, RuntimeError> {
         for stmt in &block.statements {
-            match self.exec_stmt(stmt, env)? {
+            match self.exec_stmt(stmt, env).await? {
                 Flow::Normal => {}
                 flow @ Flow::Return(_) => return Ok(flow),
             }
@@ -85,10 +95,15 @@ impl<W: Write> Interpreter<W> {
         Ok(Flow::Normal)
     }
 
-    fn exec_stmt(&self, stmt: &Stmt, env: &Rc<RefCell<Environment>>) -> Result<Flow, RuntimeError> {
+    #[async_recursion(?Send)]
+    async fn exec_stmt(
+        &self,
+        stmt: &Stmt,
+        env: &Rc<RefCell<Environment>>,
+    ) -> Result<Flow, RuntimeError> {
         match &stmt.kind {
             StmtKind::Let { name, value } => {
-                let v = self.eval_expr(value, env)?;
+                let v = self.eval_expr(value, env).await?;
                 env.borrow_mut().define(name.clone(), v);
                 Ok(Flow::Normal)
             }
@@ -97,6 +112,7 @@ impl<W: Write> Interpreter<W> {
                 params,
                 body,
                 return_type: _,
+                is_async,
             } => {
                 // The type checker already validated this signature by
                 // the time a real `aint run` gets here; the interpreter
@@ -105,12 +121,13 @@ impl<W: Write> Interpreter<W> {
                     name: name.clone(),
                     params: params.iter().map(|p| p.name.clone()).collect(),
                     body: body.clone(),
+                    is_async: *is_async,
                 }));
                 env.borrow_mut().define(name.clone(), function);
                 Ok(Flow::Normal)
             }
             StmtKind::Return(value) => {
-                let v = self.eval_expr(value, env)?;
+                let v = self.eval_expr(value, env).await?;
                 Ok(Flow::Return(v))
             }
             StmtKind::If {
@@ -118,19 +135,19 @@ impl<W: Write> Interpreter<W> {
                 then_branch,
                 else_branch,
             } => {
-                let cond = self.eval_expr(condition, env)?;
+                let cond = self.eval_expr(condition, env).await?;
                 if expect_bool(&cond, condition.span)? {
                     let child = Environment::child(env);
-                    self.exec_block(then_branch, &child)
+                    self.exec_block(then_branch, &child).await
                 } else if let Some(else_branch) = else_branch {
                     let child = Environment::child(env);
-                    self.exec_block(else_branch, &child)
+                    self.exec_block(else_branch, &child).await
                 } else {
                     Ok(Flow::Normal)
                 }
             }
             StmtKind::Expr(expr) => {
-                self.eval_expr(expr, env)?;
+                self.eval_expr(expr, env).await?;
                 Ok(Flow::Normal)
             }
             StmtKind::Import(module) => match stdlib::module_bindings(module) {
@@ -149,7 +166,8 @@ impl<W: Write> Interpreter<W> {
         }
     }
 
-    fn eval_expr(
+    #[async_recursion(?Send)]
+    async fn eval_expr(
         &self,
         expr: &Expr,
         env: &Rc<RefCell<Environment>>,
@@ -168,7 +186,7 @@ impl<W: Write> Interpreter<W> {
                     })
             }
             ExprKind::Unary { op, operand } => {
-                let v = self.eval_expr(operand, env)?;
+                let v = self.eval_expr(operand, env).await?;
                 match op {
                     UnaryOp::Neg => match v {
                         Value::Int(n) => Ok(Value::Int(-n)),
@@ -181,28 +199,28 @@ impl<W: Write> Interpreter<W> {
                 }
             }
             ExprKind::Binary { op, left, right } => {
-                let l = self.eval_expr(left, env)?;
-                let r = self.eval_expr(right, env)?;
+                let l = self.eval_expr(left, env).await?;
+                let r = self.eval_expr(right, env).await?;
                 eval_binary(*op, l, r, expr.span)
             }
             ExprKind::Call { callee, args } => {
-                let callee_value = self.eval_expr(callee, env)?;
+                let callee_value = self.eval_expr(callee, env).await?;
                 let mut arg_values = Vec::with_capacity(args.len());
                 for arg in args {
-                    arg_values.push(self.eval_expr(arg, env)?);
+                    arg_values.push(self.eval_expr(arg, env).await?);
                 }
-                self.call(callee_value, arg_values, expr.span)
+                self.call(callee_value, arg_values, expr.span).await
             }
             ExprKind::List(elements) => {
                 let mut values = Vec::with_capacity(elements.len());
                 for element in elements {
-                    values.push(self.eval_expr(element, env)?);
+                    values.push(self.eval_expr(element, env).await?);
                 }
                 Ok(Value::List(values))
             }
             ExprKind::Index { object, index } => {
-                let object_value = self.eval_expr(object, env)?;
-                let index_value = self.eval_expr(index, env)?;
+                let object_value = self.eval_expr(object, env).await?;
+                let index_value = self.eval_expr(index, env).await?;
 
                 let items = match object_value {
                     Value::List(items) => items,
@@ -235,10 +253,26 @@ impl<W: Write> Interpreter<W> {
                 }
                 Ok(items[idx as usize].clone())
             }
+            ExprKind::Await(inner) => {
+                let value = self.eval_expr(inner, env).await?;
+                match value {
+                    Value::Task(task) => self.eval_await(&task, expr.span).await,
+                    other => Err(RuntimeError::TypeMismatch {
+                        message: format!("cannot await a {}", other.type_name()),
+                        span: expr.span,
+                    }),
+                }
+            }
         }
     }
 
-    fn call(&self, callee: Value, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
+    #[async_recursion(?Send)]
+    async fn call(
+        &self,
+        callee: Value,
+        args: Vec<Value>,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
         match callee {
             Value::Function(function) => {
                 if function.params.len() != args.len() {
@@ -249,15 +283,12 @@ impl<W: Write> Interpreter<W> {
                         span,
                     });
                 }
-                // Parented to *globals*, not the caller's environment:
-                // there's no real closure semantics yet (see SPEC.md).
-                let call_env = Environment::child(&self.globals);
-                for (param, value) in function.params.iter().zip(args) {
-                    call_env.borrow_mut().define(param.clone(), value);
-                }
-                match self.exec_block(&function.body, &call_env)? {
-                    Flow::Return(v) => Ok(v),
-                    Flow::Normal => Ok(Value::Unit),
+                if function.is_async {
+                    // Deferred, not run: see Task's doc comment and
+                    // SPEC.md. Nothing happens until this is awaited.
+                    Ok(Value::Task(Rc::new(Task::Function { function, args })))
+                } else {
+                    self.run_function(&function, args).await
                 }
             }
             Value::Native(NativeFunction::Print) => {
@@ -277,11 +308,66 @@ impl<W: Write> Interpreter<W> {
                 })?;
                 Ok(Value::Unit)
             }
-            Value::Native(native) => stdlib::call(native, args, span),
+            Value::Native(native) => {
+                if native.is_async() {
+                    Ok(Value::Task(Rc::new(Task::Native { native, args })))
+                } else {
+                    stdlib::call(native, args, span)
+                }
+            }
             other => Err(RuntimeError::NotCallable {
                 type_name: other.type_name(),
                 span,
             }),
+        }
+    }
+
+    /// Runs a function body to completion: parented to *globals*, not
+    /// the caller's environment, since there's no real closure
+    /// semantics yet (see SPEC.md). Shared by the sync-call path in
+    /// [`Self::call`] and the await path in [`Self::eval_await`].
+    #[async_recursion(?Send)]
+    async fn run_function(
+        &self,
+        function: &Rc<Function>,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let call_env = Environment::child(&self.globals);
+        for (param, value) in function.params.iter().zip(args) {
+            call_env.borrow_mut().define(param.clone(), value);
+        }
+        match self.exec_block(&function.body, &call_env).await? {
+            Flow::Return(v) => Ok(v),
+            Flow::Normal => Ok(Value::Unit),
+        }
+    }
+
+    /// Actually runs the deferred computation behind a `Value::Task` —
+    /// the only place `await` has any effect.
+    #[async_recursion(?Send)]
+    async fn eval_await(&self, task: &Task, span: Span) -> Result<Value, RuntimeError> {
+        match task {
+            Task::Function { function, args } => self.run_function(function, args.clone()).await,
+            Task::Native { native, args } => {
+                self.run_async_native(*native, args.clone(), span).await
+            }
+        }
+    }
+
+    async fn run_async_native(
+        &self,
+        native: NativeFunction,
+        args: Vec<Value>,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        match native {
+            NativeFunction::TimeSleepMs => {
+                let [ms_value] = stdlib::one(native, args, span)?;
+                let ms = stdlib::int(ms_value, span)?;
+                tokio::time::sleep(Duration::from_millis(ms.max(0) as u64)).await;
+                Ok(Value::Unit)
+            }
+            _ => unreachable!("only async natives should ever reach eval_await"),
         }
     }
 }
@@ -349,19 +435,55 @@ fn type_mismatch(op: &str, left: &Value, right: &Value, span: Span) -> RuntimeEr
 mod tests {
     use super::*;
 
-    fn run_capturing(src: &str) -> String {
-        let program = aint_parser::parse_source(src).expect("should parse");
-        let interpreter = Interpreter::with_output(Vec::new());
-        interpreter.run(&program).expect("should run without error");
-        String::from_utf8(interpreter.into_output()).expect("output should be valid utf8")
+    /// Bridges the now-async `Interpreter::run` into these otherwise
+    /// unchanged sync `#[test]` bodies, so the 24 tests below stay
+    /// exactly as they were before milestone 07 — only this helper (and
+    /// its sibling `run_expect_err`) had to change. See SPEC.md.
+    /// Runs `src` on a dedicated thread with a large stack, not just a
+    /// throwaway current-thread runtime on the test-harness thread.
+    /// Deep AINT recursion (the language's only iteration mechanism —
+    /// see SPEC.md) needs far more Rust stack once every eval step is
+    /// async; the default thread stack overflows well before anything
+    /// resembling a real program does, as `showcase.an`'s Collatz(27)
+    /// (111 levels) found the hard way. `Interpreter` holds `Rc`, so it
+    /// can't be built outside and moved in — everything happens inside
+    /// the closure, which only captures `Send` data (the source text).
+    fn run_on_big_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(64 * 1024 * 1024)
+            .spawn(f)
+            .expect("failed to spawn a big-stack thread")
+            .join()
+            .expect("the big-stack thread panicked")
     }
 
-    fn run_expect_err(src: &str) -> RuntimeError {
-        let program = aint_parser::parse_source(src).expect("should parse");
-        let interpreter = Interpreter::with_output(Vec::new());
-        interpreter
-            .run(&program)
-            .expect_err("should produce a runtime error")
+    fn run_capturing(src: &'static str) -> String {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(src).expect("should parse");
+            let interpreter = Interpreter::with_output(Vec::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            String::from_utf8(interpreter.into_output()).expect("output should be valid utf8")
+        })
+    }
+
+    fn run_expect_err(src: &'static str) -> RuntimeError {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(src).expect("should parse");
+            let interpreter = Interpreter::with_output(Vec::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        })
     }
 
     #[test]
@@ -384,8 +506,6 @@ mod tests {
 
     #[test]
     fn let_inside_if_does_not_leak_out() {
-        // `x` from the if-block shouldn't shadow/persist for the outer
-        // `x` once the block ends.
         let output = run_capturing("let x = 1\nif true { let x = 2 print(x) }\nprint(x)");
         assert_eq!(output, "2\n1\n");
     }
@@ -406,8 +526,6 @@ mod tests {
 
     #[test]
     fn function_with_no_return_yields_unit_and_does_not_print_it() {
-        // Just confirms falling off the end of a function body doesn't
-        // panic or error; nothing here actually prints the Unit result.
         assert_eq!(run_capturing("fn noop() -> Unit { let x = 1 }\nnoop()"), "");
     }
 
@@ -498,9 +616,6 @@ mod tests {
 
     #[test]
     fn recursive_list_processing_via_index_and_length() {
-        // Exactly the pattern examples/stdlib.an relies on: no loops in
-        // the language, so recursion + indexing + length is how a list
-        // gets summed.
         assert_eq!(
             run_capturing(
                 "import collections\n\
@@ -561,8 +676,6 @@ mod tests {
 
     #[test]
     fn time_now_seconds_returns_a_plausible_timestamp() {
-        // Deterministic on purpose: never assert the exact value, just
-        // that it looks like a real, current Unix timestamp.
         assert_eq!(
             run_capturing("import time\nprint(time_now_seconds() > 1700000000)"),
             "true\n"
@@ -578,6 +691,88 @@ mod tests {
                  print(collections_length([\"a\", \"b\"]))"
             ),
             "3\n2\n"
+        );
+    }
+
+    // --- async / await ---------------------------------------------------
+
+    #[test]
+    fn calling_an_async_fn_without_await_does_not_run_its_body() {
+        // If this ever actually executed, dividing by zero would error
+        // the whole program. It shouldn't - nothing awaits it.
+        assert_eq!(
+            run_capturing(
+                "async fn boom() -> Int { return 1 / 0 }\n\
+                 let _pending = boom()\n\
+                 print(1)"
+            ),
+            "1\n"
+        );
+    }
+
+    #[test]
+    fn awaiting_an_async_fn_runs_its_body_and_returns_the_value() {
+        assert_eq!(
+            run_capturing(
+                "async fn double(n: Int) -> Int { return n * 2 }\n\
+                 print(await double(21))"
+            ),
+            "42\n"
+        );
+    }
+
+    #[test]
+    fn nested_async_calls_compose() {
+        assert_eq!(
+            run_capturing(
+                "async fn inner(n: Int) -> Int { return n + 1 }\n\
+                 async fn outer(n: Int) -> Int { return await inner(n) * 2 }\n\
+                 print(await outer(5))"
+            ),
+            "12\n"
+        );
+    }
+
+    #[test]
+    fn sync_and_async_functions_interoperate() {
+        assert_eq!(
+            run_capturing(
+                "fn double(n: Int) -> Int { return n * 2 }\n\
+                 async fn triple(n: Int) -> Int { return n * 3 }\n\
+                 print(double(5) + await triple(5))"
+            ),
+            "25\n"
+        );
+    }
+
+    #[test]
+    fn errors_on_awaiting_a_non_task() {
+        let err = run_expect_err("await 1");
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn time_sleep_ms_actually_suspends() {
+        // The one test that proves this milestone did something real:
+        // a genuine suspend/resume through Tokio, not synchronous code
+        // dressed up in async syntax.
+        let program = aint_parser::parse_source("import time\nawait time_sleep_ms(30)")
+            .expect("should parse");
+        let interpreter = Interpreter::with_output(Vec::new());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build a test runtime");
+
+        let start = std::time::Instant::now();
+        runtime
+            .block_on(interpreter.run(&program))
+            .expect("should run without error");
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= std::time::Duration::from_millis(25),
+            "expected at least ~30ms to have actually elapsed from a real sleep, got {elapsed:?}"
         );
     }
 }

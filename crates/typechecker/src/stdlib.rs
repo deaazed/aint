@@ -9,9 +9,12 @@
 use aint_ast::Type;
 
 /// One stdlib function's fixed signature: `(param types) -> return type`.
+/// `is_async` mirrors a user `async fn`: a call-expression's type is
+/// `Task<return_type>` instead of `return_type` when it's set.
 pub(crate) struct Signature {
     pub params: Vec<Type>,
     pub return_type: Type,
+    pub is_async: bool,
 }
 
 /// The plain, monomorphic functions a module provides, as
@@ -47,7 +50,10 @@ pub(crate) fn module_functions(module: &str) -> Option<Vec<(&'static str, Signat
                 Type::String,
             ),
         ]),
-        "time" => Some(vec![sig("time_now_seconds", vec![], Type::Int)]),
+        "time" => Some(vec![
+            sig("time_now_seconds", vec![], Type::Int),
+            async_sig("time_sleep_ms", vec![Type::Int], Type::Unit),
+        ]),
         // "collections" intentionally omitted - see the doc comment above.
         _ => None,
     }
@@ -59,6 +65,25 @@ fn sig(name: &'static str, params: Vec<Type>, return_type: Type) -> (&'static st
         Signature {
             params,
             return_type,
+            is_async: false,
+        },
+    )
+}
+
+/// Like [`sig`], but for a native function that's `async` — currently
+/// just `time_sleep_ms`, the one genuinely asynchronous stdlib
+/// function (see `docs/milestones/07-async-concurrency/SPEC.md`).
+fn async_sig(
+    name: &'static str,
+    params: Vec<Type>,
+    return_type: Type,
+) -> (&'static str, Signature) {
+    (
+        name,
+        Signature {
+            params,
+            return_type,
+            is_async: true,
         },
     )
 }

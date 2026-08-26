@@ -40,7 +40,10 @@ pub(crate) fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeF
             ("string_contains", NativeFunction::StringContains),
             ("string_concat", NativeFunction::StringConcat),
         ]),
-        "time" => Some(vec![("time_now_seconds", NativeFunction::TimeNowSeconds)]),
+        "time" => Some(vec![
+            ("time_now_seconds", NativeFunction::TimeNowSeconds),
+            ("time_sleep_ms", NativeFunction::TimeSleepMs),
+        ]),
         "collections" => Some(vec![(
             "collections_length",
             NativeFunction::CollectionsLength,
@@ -57,6 +60,9 @@ pub(crate) fn call(
 ) -> Result<Value, RuntimeError> {
     match native {
         NativeFunction::Print => unreachable!("Print is handled directly in Interpreter::call"),
+        NativeFunction::TimeSleepMs => {
+            unreachable!("async natives are handled by Interpreter::eval_await, not stdlib::call")
+        }
         NativeFunction::MathSqrt => {
             let [x] = one(native, args, span)?;
             Ok(Value::Float(float(x, span)?.sqrt()))
@@ -154,7 +160,11 @@ fn zero(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<[Value; 
     })
 }
 
-fn one(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<[Value; 1], RuntimeError> {
+pub(crate) fn one(
+    native: NativeFunction,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<[Value; 1], RuntimeError> {
     let found = args.len();
     args.try_into().map_err(|_| RuntimeError::ArityMismatch {
         name: native.name().to_string(),
@@ -172,6 +182,16 @@ fn two(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<[Value; 2
         found,
         span,
     })
+}
+
+pub(crate) fn int(value: Value, span: Span) -> Result<i64, RuntimeError> {
+    match value {
+        Value::Int(n) => Ok(n),
+        other => Err(RuntimeError::TypeMismatch {
+            message: format!("expected Int, found {}", other.type_name()),
+            span,
+        }),
+    }
 }
 
 fn float(value: Value, span: Span) -> Result<f64, RuntimeError> {

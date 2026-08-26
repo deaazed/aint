@@ -1,5 +1,5 @@
 use aint_ast::{
-    BinaryOp, Block, Expr, ExprKind, Param, Program, Span, Stmt, StmtKind, Type, UnaryOp,
+    BinaryOp, Block, Expr, ExprKind, Param, Position, Program, Span, Stmt, StmtKind, Type, UnaryOp,
 };
 use aint_lexer::{tokenize, Token, TokenKind};
 
@@ -90,7 +90,15 @@ impl Parser {
         match self.current().kind {
             TokenKind::Let => self.parse_let_statement(),
             TokenKind::If => self.parse_if_statement(),
-            TokenKind::Fn => self.parse_fn_statement(),
+            TokenKind::Fn => {
+                let fn_token = self.expect(TokenKind::Fn, "`fn`")?;
+                self.parse_fn_body(false, fn_token.span.start)
+            }
+            TokenKind::Async => {
+                let async_token = self.expect(TokenKind::Async, "`async`")?;
+                self.expect(TokenKind::Fn, "`fn`")?;
+                self.parse_fn_body(true, async_token.span.start)
+            }
             TokenKind::Return => self.parse_return_statement(),
             TokenKind::Import => self.parse_import_statement(),
             _ => self.parse_expr_statement(),
@@ -113,8 +121,10 @@ impl Parser {
         Ok(Stmt::new(StmtKind::Import(module), span))
     }
 
-    fn parse_fn_statement(&mut self) -> Result<Stmt, ParseError> {
-        let fn_token = self.expect(TokenKind::Fn, "`fn`")?;
+    /// Parses everything after `fn`/`async fn` — shared by both, since
+    /// they differ only in whether `is_async` ends up `true` and where
+    /// the statement's span starts (`fn`'s own position, or `async`'s).
+    fn parse_fn_body(&mut self, is_async: bool, start: Position) -> Result<Stmt, ParseError> {
         let (name, _) = self.expect_identifier()?;
         self.expect(TokenKind::LeftParen, "`(`")?;
         let mut params = Vec::new();
@@ -136,13 +146,14 @@ impl Parser {
         self.expect(TokenKind::Arrow, "`->`")?;
         let (return_type, _) = self.parse_type()?;
         let body = self.parse_block()?;
-        let span = Span::new(fn_token.span.start, body.span.end);
+        let span = Span::new(start, body.span.end);
         Ok(Stmt::new(
             StmtKind::Fn {
                 name,
                 params,
                 return_type,
                 body,
+                is_async,
             },
             span,
         ))
@@ -310,6 +321,12 @@ impl Parser {
                 span,
             ));
         }
+        if matches!(self.current().kind, TokenKind::Await) {
+            let await_token = self.advance();
+            let operand = self.parse_unary()?;
+            let span = Span::new(await_token.span.start, operand.span.end);
+            return Ok(Expr::new(ExprKind::Await(Box::new(operand)), span));
+        }
         self.parse_postfix()
     }
 
@@ -431,7 +448,6 @@ pub fn parse_source(source: &str) -> Result<Program, ParseError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aint_ast::Position;
 
     /// Renders an expression as a parenthesized S-expression, e.g.
     /// `1 + 2 * 3` -> `(+ 1 (* 2 3))`, so precedence/associativity tests
@@ -469,6 +485,7 @@ mod tests {
             ExprKind::Index { object, index } => {
                 format!("(index {} {})", describe_expr(object), describe_expr(index))
             }
+            ExprKind::Await(inner) => format!("(await {})", describe_expr(inner)),
         }
     }
 
@@ -526,6 +543,11 @@ mod tests {
     #[test]
     fn unary_minus_binds_tighter_than_binary() {
         assert_eq!(expr_str("-1 + 2"), "(+ (- 1) 2)");
+    }
+
+    #[test]
+    fn await_binds_like_unary_minus() {
+        assert_eq!(expr_str("await foo() + 1"), "(+ (await (foo)) 1)");
     }
 
     #[test]
@@ -636,6 +658,7 @@ mod tests {
                 params,
                 return_type,
                 body,
+                is_async,
             } => {
                 assert_eq!(name, "add");
                 assert_eq!(
@@ -653,6 +676,19 @@ mod tests {
                 );
                 assert_eq!(return_type, Type::Int);
                 assert_eq!(body.statements.len(), 1);
+                assert!(!is_async);
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_async_fn_statement() {
+        let stmt = parse_one_stmt("async fn wait(n: Int) -> Int { return n }");
+        match stmt.kind {
+            StmtKind::Fn { name, is_async, .. } => {
+                assert_eq!(name, "wait");
+                assert!(is_async);
             }
             other => panic!("expected Fn, got {other:?}"),
         }

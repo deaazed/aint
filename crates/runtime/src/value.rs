@@ -13,6 +13,10 @@ pub enum Value {
     List(Vec<Value>),
     Function(Rc<Function>),
     Native(NativeFunction),
+    /// A deferred call to an `async fn` or an async native — captured,
+    /// not run. Nothing happens until this is `await`-ed; see
+    /// `docs/milestones/07-async-concurrency/SPEC.md`.
+    Task(Rc<Task>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -20,6 +24,31 @@ pub struct Function {
     pub name: String,
     pub params: Vec<String>,
     pub body: Block,
+    pub is_async: bool,
+}
+
+/// The deferred computation behind a [`Value::Task`]: either a call to
+/// a user-defined `async fn`, or a call to one of the (currently one)
+/// async native functions.
+#[derive(Debug, PartialEq)]
+pub enum Task {
+    Function {
+        function: Rc<Function>,
+        args: Vec<Value>,
+    },
+    Native {
+        native: NativeFunction,
+        args: Vec<Value>,
+    },
+}
+
+impl Task {
+    fn name(&self) -> &str {
+        match self {
+            Task::Function { function, .. } => &function.name,
+            Task::Native { native, .. } => native.name(),
+        }
+    }
 }
 
 /// A function implemented in the runtime itself rather than in AINT
@@ -45,6 +74,10 @@ pub enum NativeFunction {
     StringContains,
     StringConcat,
     TimeNowSeconds,
+    /// The one genuinely asynchronous native function (milestone 07),
+    /// chosen as the simplest possible thing that actually suspends —
+    /// see SPEC.md for why one real async primitive matters here.
+    TimeSleepMs,
     CollectionsLength,
 }
 
@@ -58,6 +91,7 @@ impl Value {
             Value::Unit => "Unit",
             Value::List(_) => "List",
             Value::Function(_) | Value::Native(_) => "Function",
+            Value::Task(_) => "Task",
         }
     }
 }
@@ -82,6 +116,7 @@ impl fmt::Display for Value {
             }
             Value::Function(func) => write!(f, "<fn {}>", func.name),
             Value::Native(native) => write!(f, "<native fn {}>", native.name()),
+            Value::Task(task) => write!(f, "<task {}>", task.name()),
         }
     }
 }
@@ -105,7 +140,14 @@ impl NativeFunction {
             NativeFunction::StringContains => "string_contains",
             NativeFunction::StringConcat => "string_concat",
             NativeFunction::TimeNowSeconds => "time_now_seconds",
+            NativeFunction::TimeSleepMs => "time_sleep_ms",
             NativeFunction::CollectionsLength => "collections_length",
         }
+    }
+
+    /// Whether calling this defers into a [`Value::Task`] instead of
+    /// running immediately. Only `time_sleep_ms` today.
+    pub(crate) fn is_async(self) -> bool {
+        matches!(self, NativeFunction::TimeSleepMs)
     }
 }

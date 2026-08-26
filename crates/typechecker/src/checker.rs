@@ -18,6 +18,7 @@ enum Binding {
 struct FunctionSignature {
     params: Vec<Type>,
     return_type: Type,
+    is_async: bool,
 }
 
 /// Single-pass static type checker over the AST from `aint-ast`.
@@ -54,12 +55,13 @@ impl TypeChecker {
                 name,
                 params,
                 return_type,
+                is_async,
                 ..
             } = &stmt.kind
             {
                 self.define(
                     name.clone(),
-                    Binding::Function(signature(params, return_type)),
+                    Binding::Function(signature(params, return_type, *is_async)),
                 );
             }
         }
@@ -101,6 +103,7 @@ impl TypeChecker {
                 params,
                 return_type,
                 body,
+                is_async,
             } => {
                 // Redundant for a hoisted top-level function (already
                 // bound above); the only place a block-nested `fn` gets
@@ -108,7 +111,7 @@ impl TypeChecker {
                 // the same way a `let` would be.
                 self.define(
                     name.clone(),
-                    Binding::Function(signature(params, return_type)),
+                    Binding::Function(signature(params, return_type, *is_async)),
                 );
 
                 self.push_scope();
@@ -183,6 +186,7 @@ impl TypeChecker {
                                 Binding::Function(FunctionSignature {
                                     params: sig.params,
                                     return_type: sig.return_type,
+                                    is_async: sig.is_async,
                                 }),
                             );
                         }
@@ -279,6 +283,16 @@ impl TypeChecker {
                     }),
                 }
             }
+            ExprKind::Await(inner) => {
+                let ty = self.check_expr(inner)?;
+                match ty {
+                    Type::Task(inner_ty) => Ok(*inner_ty),
+                    other => Err(TypeError::Mismatch {
+                        message: format!("cannot await {other}; expected a Task"),
+                        span: inner.span,
+                    }),
+                }
+            }
         }
     }
 
@@ -366,14 +380,19 @@ impl TypeChecker {
             }
         }
 
-        Ok(sig.return_type)
+        if sig.is_async {
+            Ok(Type::Task(Box::new(sig.return_type)))
+        } else {
+            Ok(sig.return_type)
+        }
     }
 }
 
-fn signature(params: &[aint_ast::Param], return_type: &Type) -> FunctionSignature {
+fn signature(params: &[aint_ast::Param], return_type: &Type, is_async: bool) -> FunctionSignature {
     FunctionSignature {
         params: params.iter().map(|p| p.ty.clone()).collect(),
         return_type: return_type.clone(),
+        is_async,
     }
 }
 
@@ -636,5 +655,52 @@ mod tests {
     fn unknown_module_is_a_positioned_error() {
         let err = check("import frobnicate").unwrap_err();
         assert!(matches!(err, TypeError::UnknownModule { .. }));
+    }
+
+    // --- async / await ---------------------------------------------------
+
+    #[test]
+    fn calling_an_async_fn_without_await_yields_a_task() {
+        // If the call-expression's type were Int instead of Task<Int>,
+        // this addition would type-check; it must not.
+        let err = check(
+            "async fn f() -> Int { return 1 }\n\
+             print(f() + 1)",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn awaiting_a_task_yields_the_inner_type() {
+        assert!(check(
+            "async fn f() -> Int { return 1 }\n\
+             let x = await f()\n\
+             print(x + 1)"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn awaiting_a_non_task_is_a_type_error() {
+        let err = check("await 1").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn async_native_type_checks_as_a_task_after_import() {
+        assert!(check("import time\nawait time_sleep_ms(10)").is_ok());
+    }
+
+    #[test]
+    fn async_fn_still_needs_a_matching_return_type() {
+        let err = check("async fn f() -> Int { return \"x\" }").unwrap_err();
+        assert!(matches!(err, TypeError::ReturnTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn async_fn_still_needs_to_return_on_every_path() {
+        let err = check("async fn f() -> Int { let x = 1 }").unwrap_err();
+        assert!(matches!(err, TypeError::MissingReturn { .. }));
     }
 }

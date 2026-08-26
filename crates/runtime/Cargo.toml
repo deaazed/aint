@@ -8,6 +8,15 @@ description = "Tree-walk interpreter and execution engine for AINT: deterministi
 
 [dependencies]
 aint-ast = { path = "../ast" }
+tokio = { version = "1", features = ["full"] }
+# The interpreter's core eval methods are mutually recursive async fns
+# (`await` can appear anywhere an expression can, so the whole call
+# graph has to be async). Rust rejects naive recursive async fn since
+# the returned future's type would be infinitely sized; this crate
+# boxes the recursive call sites for us. `?Send` because Value holds
+# `Rc`/`RefCell` throughout and is never spawned onto another thread —
+# see docs/milestones/07-async-concurrency/SPEC.md.
+async-recursion = "1"
 
 [dev-dependencies]
 # Only for tests: makes it possible to write test programs as AINT

@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn keywords_are_not_identifiers() {
         assert_eq!(
-            kinds("let fn return if else true false import"),
+            kinds("let fn return if else true false import async await"),
             vec![
                 TokenKind::Let,
                 TokenKind::Fn,
@@ -315,6 +315,8 @@ mod tests {
                 TokenKind::True,
                 TokenKind::False,
                 TokenKind::Import,
+                TokenKind::Async,
+                TokenKind::Await,
                 TokenKind::Eof,
             ]
         );

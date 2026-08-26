@@ -37,6 +37,7 @@ pub enum ExprKind {
         object: Box<Expr>,
         index: Box<Expr>,
     },
+    Await(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

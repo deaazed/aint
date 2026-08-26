@@ -1,5 +1,4 @@
-use aint_parser::parse_source;
-use aint_runtime::Interpreter;
+mod common;
 
 const SHOWCASE_AN: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -14,14 +13,7 @@ const SHOWCASE_AN: &str = include_str!(concat!(
 /// and the trimmed string's length), not just copied from a first run.
 #[test]
 fn runs_showcase_an() {
-    let program =
-        parse_source(SHOWCASE_AN).expect("examples/showcase.an should parse without errors");
-    let interpreter = Interpreter::with_output(Vec::new());
-    interpreter
-        .run(&program)
-        .expect("examples/showcase.an should run without errors");
-
-    let output = String::from_utf8(interpreter.into_output()).expect("output should be utf8");
+    let output = common::run_capturing(SHOWCASE_AN);
 
     let expected = "\
 11

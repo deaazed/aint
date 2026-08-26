@@ -56,7 +56,7 @@ this.
 `collections`, `string`, `json`, `time` to write real (non-AI) programs.
 Not a hundred libraries — just enough.
 
-## 07 — Async / concurrency
+## 07 — Async / concurrency — done
 
 `async fn` / `await` on Tokio. Needed before inference and tools exist,
 since both are inherently asynchronous.

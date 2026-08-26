@@ -19,3 +19,4 @@ aint-typechecker = { path = "../typechecker" }
 aint-ir = { path = "../ir" }
 aint-runtime = { path = "../runtime" }
 clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }

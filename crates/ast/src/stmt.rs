@@ -29,6 +29,7 @@ pub enum StmtKind {
         params: Vec<Param>,
         return_type: Type,
         body: Block,
+        is_async: bool,
     },
     Return(Expr),
     Import(String),

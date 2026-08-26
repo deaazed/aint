@@ -19,6 +19,8 @@ pub enum TokenKind {
     True,
     False,
     Import,
+    Async,
+    Await,
 
     // Operators
     Plus,
@@ -60,6 +62,8 @@ impl fmt::Display for TokenKind {
             TokenKind::True => write!(f, "`true`"),
             TokenKind::False => write!(f, "`false`"),
             TokenKind::Import => write!(f, "`import`"),
+            TokenKind::Async => write!(f, "`async`"),
+            TokenKind::Await => write!(f, "`await`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -106,6 +110,8 @@ pub(crate) fn keyword(word: &str) -> Option<TokenKind> {
         "true" => TokenKind::True,
         "false" => TokenKind::False,
         "import" => TokenKind::Import,
+        "async" => TokenKind::Async,
+        "await" => TokenKind::Await,
         _ => return None,
     })
 }
