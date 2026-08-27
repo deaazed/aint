@@ -105,7 +105,7 @@ effects, checked by the compiler.
 tokens, latency, output. Not a library you opt into — part of the
 execution model.
 
-## 15 — Deterministic AI testing
+## 15 — Deterministic AI testing — done
 
 `test { mock ... assert ... }` blocks. `aint test` must pass completely
 offline.

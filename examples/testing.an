@@ -1,0 +1,35 @@
+import string
+
+enum Sentiment { Positive Neutral Negative }
+
+infer classify(text: String) -> Sentiment
+
+tool database_get_name(id: String) -> String
+
+fn greet(id: String, review: String) -> String {
+    let name = await database_get_name(id)
+    let sentiment = await classify(review)
+    if sentiment == Sentiment_Positive {
+        return string_concat(string_concat("Thank you, ", name), "!")
+    } else {
+        return string_concat(string_concat("We hear you, ", name), ".")
+    }
+}
+
+test "positive review gets a thank-you" {
+    mock database_get_name -> "Ada"
+    mock classify -> Sentiment_Positive
+    assert greet("42", "Loved it!") == "Thank you, Ada!"
+}
+
+test "negative review gets acknowledged" {
+    mock database_get_name -> "Grace"
+    mock classify -> Sentiment_Negative
+    assert greet("7", "Not great.") == "We hear you, Grace."
+}
+
+test "neutral review still gets acknowledged" {
+    mock database_get_name -> "Sam"
+    mock classify -> Sentiment_Neutral
+    assert greet("9", "It was fine.") == "We hear you, Sam."
+}

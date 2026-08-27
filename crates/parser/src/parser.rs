@@ -105,8 +105,53 @@ impl Parser {
             TokenKind::Infer => self.parse_infer_statement(),
             TokenKind::Enum => self.parse_enum_statement(),
             TokenKind::Tool => self.parse_tool_statement(),
+            TokenKind::Test => self.parse_test_statement(),
+            TokenKind::Mock => self.parse_mock_statement(),
+            TokenKind::Assert => self.parse_assert_statement(),
             _ => self.parse_expr_statement(),
         }
+    }
+
+    /// Parses `test "name" { ... }`.
+    fn parse_test_statement(&mut self) -> Result<Stmt, ParseError> {
+        let test_token = self.expect(TokenKind::Test, "`test`")?;
+        let name_token = self.current().clone();
+        let name = match name_token.kind {
+            TokenKind::String(s) => {
+                self.advance();
+                s
+            }
+            _ => {
+                return Err(ParseError::Unexpected {
+                    expected: "a string literal naming the test".to_string(),
+                    found: name_token,
+                });
+            }
+        };
+        let body = self.parse_block()?;
+        let span = Span::new(test_token.span.start, body.span.end);
+        Ok(Stmt::new(StmtKind::Test { name, body }, span))
+    }
+
+    /// Parses `mock function -> value`. `value` stays a general `Expr`
+    /// at parse time — restricting it to literals/`EnumName_Variant` is
+    /// the type checker's job (see SPEC.md), the same layering
+    /// `parse_type` already uses for enum names.
+    fn parse_mock_statement(&mut self) -> Result<Stmt, ParseError> {
+        let mock_token = self.expect(TokenKind::Mock, "`mock`")?;
+        let (function, _) = self.expect_identifier()?;
+        self.expect(TokenKind::Arrow, "`->`")?;
+        let value = self.parse_expr()?;
+        let span = Span::new(mock_token.span.start, value.span.end);
+        Ok(Stmt::new(StmtKind::Mock { function, value }, span))
+    }
+
+    /// Parses `assert condition`.
+    fn parse_assert_statement(&mut self) -> Result<Stmt, ParseError> {
+        let assert_token = self.expect(TokenKind::Assert, "`assert`")?;
+        let condition = self.parse_expr()?;
+        let span = Span::new(assert_token.span.start, condition.span.end);
+        Ok(Stmt::new(StmtKind::Assert { condition }, span))
     }
 
     fn parse_let_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -1061,6 +1106,55 @@ mod tests {
                 assert_eq!(effects, Some(vec![Effect::Pure]));
             }
             other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_test_statement() {
+        let stmt = parse_one_stmt("test \"greets a customer\" { assert true }");
+        match stmt.kind {
+            StmtKind::Test { name, body } => {
+                assert_eq!(name, "greets a customer");
+                assert_eq!(body.statements.len(), 1);
+            }
+            other => panic!("expected Test, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_mock_statement() {
+        let stmt = parse_one_stmt("mock classify -> Sentiment_Positive");
+        match stmt.kind {
+            StmtKind::Mock { function, value } => {
+                assert_eq!(function, "classify");
+                assert_eq!(describe_expr(&value), "Sentiment_Positive");
+            }
+            other => panic!("expected Mock, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_assert_statement() {
+        let stmt = parse_one_stmt("assert 1 == 1");
+        match stmt.kind {
+            StmtKind::Assert { condition } => {
+                assert_eq!(describe_expr(&condition), "(== 1 1)");
+            }
+            other => panic!("expected Assert, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_block_can_contain_mock_and_assert() {
+        let stmt = parse_one_stmt(
+            "test \"positive\" {\n\
+                 mock classify -> Sentiment_Positive\n\
+                 assert await classify(\"great\") == Sentiment_Positive\n\
+             }",
+        );
+        match stmt.kind {
+            StmtKind::Test { body, .. } => assert_eq!(body.statements.len(), 2),
+            other => panic!("expected Test, got {other:?}"),
         }
     }
 

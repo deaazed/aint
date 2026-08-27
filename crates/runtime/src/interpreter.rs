@@ -126,8 +126,17 @@ impl<W: Write, M: Model> Interpreter<W, M> {
     }
 
     pub async fn run(&self, program: &Program) -> Result<(), RuntimeError> {
+        self.run_statements(&program.statements).await
+    }
+
+    /// Runs a sequence of top-level statements against this
+    /// interpreter's globals — what `run` does for a whole `Program`,
+    /// generalized to a slice so the milestone-15 test runner can run
+    /// "every declaration, then just this one test block's body" as
+    /// two separate calls against the same interpreter.
+    pub async fn run_statements(&self, statements: &[Stmt]) -> Result<(), RuntimeError> {
         let env = Rc::clone(&self.globals);
-        for stmt in &program.statements {
+        for stmt in statements {
             match self.exec_stmt(stmt, &env).await? {
                 Flow::Normal => {}
                 Flow::Return(_) => {
@@ -241,6 +250,30 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     );
                 }
                 Ok(Flow::Normal)
+            }
+            StmtKind::Test { .. } => {
+                // Inert during `aint run` - a `test` block only
+                // executes via the milestone-15 test runner, which
+                // calls `run_statements` on its body directly rather
+                // than reaching it through this arm at all.
+                Ok(Flow::Normal)
+            }
+            StmtKind::Mock { .. } => {
+                // A no-op when actually executed: its effect (telling
+                // this interpreter's `MockModel`/`MockTool` what to
+                // return) already happened before the interpreter was
+                // constructed - see `test_runner.rs`.
+                Ok(Flow::Normal)
+            }
+            StmtKind::Assert { condition } => {
+                let value = self.eval_expr(condition, env).await?;
+                if expect_bool(&value, condition.span)? {
+                    Ok(Flow::Normal)
+                } else {
+                    Err(RuntimeError::AssertionFailed {
+                        span: condition.span,
+                    })
+                }
             }
             StmtKind::Return(value) => {
                 let v = self.eval_expr(value, env).await?;

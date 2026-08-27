@@ -66,6 +66,20 @@ pub enum RuntimeError {
         message: String,
         span: Span,
     },
+    /// A failed `assert`. See
+    /// `docs/milestones/15-deterministic-ai-testing/SPEC.md`.
+    AssertionFailed {
+        span: Span,
+    },
+    /// A `mock` value the standalone mock-value evaluator (milestone
+    /// 15's `test_runner` module) doesn't know how to handle — see
+    /// `docs/milestones/15-deterministic-ai-testing/SPEC.md` for
+    /// exactly what's supported (literals and `EnumName_Variant`
+    /// references only).
+    UnsupportedMockValue {
+        message: String,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -83,7 +97,9 @@ impl RuntimeError {
             | RuntimeError::IndexOutOfBounds { span, .. }
             | RuntimeError::ModelError { span, .. }
             | RuntimeError::SchemaViolation { span, .. }
-            | RuntimeError::ToolError { span, .. } => *span,
+            | RuntimeError::ToolError { span, .. }
+            | RuntimeError::AssertionFailed { span }
+            | RuntimeError::UnsupportedMockValue { span, .. } => *span,
         }
     }
 }
@@ -129,6 +145,12 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::ToolError { message, span } => {
                 write!(f, "{}: tool error: {message}", span.start)
+            }
+            RuntimeError::AssertionFailed { span } => {
+                write!(f, "{}: assertion failed", span.start)
+            }
+            RuntimeError::UnsupportedMockValue { message, span } => {
+                write!(f, "{}: unsupported mock value: {message}", span.start)
             }
         }
     }

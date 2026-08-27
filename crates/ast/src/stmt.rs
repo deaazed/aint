@@ -69,6 +69,29 @@ pub enum StmtKind {
         params: Vec<Param>,
         return_type: Type,
     },
+    /// `test "name" { ... }` — a top-level, isolated test block. Inert
+    /// during `aint run` (skipped entirely); `aint test` gives each one
+    /// its own fresh `Interpreter`. See
+    /// `docs/milestones/15-deterministic-ai-testing/SPEC.md`.
+    Test {
+        name: String,
+        body: Block,
+    },
+    /// `mock function -> value` — configures what a declared `infer`
+    /// or `tool` returns, for the enclosing `test` block only. `value`
+    /// is deliberately restricted (checked by the type checker, not
+    /// the parser) to literals and `EnumName_Variant` references — see
+    /// SPEC.md for why this isn't a general expression.
+    Mock {
+        function: String,
+        value: Expr,
+    },
+    /// `assert condition` — a general statement, not test-only syntax;
+    /// see SPEC.md for how `aint run` and `aint test` handle a failed
+    /// one differently without the statement itself needing to know.
+    Assert {
+        condition: Expr,
+    },
 }
 
 /// One of the five effect words `ROADMAP.md` names. See

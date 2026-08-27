@@ -12,6 +12,7 @@ mod error;
 mod interpreter;
 mod model;
 mod stdlib;
+mod test_runner;
 mod tool;
 mod trace;
 mod value;
@@ -19,6 +20,7 @@ mod value;
 pub use error::RuntimeError;
 pub use interpreter::Interpreter;
 pub use model::{InferenceOutcome, InferenceRequest, MockModel, Model};
+pub use test_runner::{run_tests, TestOutcome};
 pub use tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
 pub use trace::{InferenceTraceOutcome, TokenUsage, TraceRecord};
 pub use value::{

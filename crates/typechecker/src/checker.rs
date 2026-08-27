@@ -103,6 +103,10 @@ pub struct TypeChecker {
     /// happens for calls made from here. See
     /// `docs/milestones/13-effects/SPEC.md`.
     current_effects: Option<HashSet<Effect>>,
+    /// Whether the statement currently being checked is inside a
+    /// `test` block's body — `mock` is a type error everywhere else.
+    /// See `docs/milestones/15-deterministic-ai-testing/SPEC.md`.
+    in_test: bool,
 }
 
 impl Default for TypeChecker {
@@ -118,6 +122,7 @@ impl TypeChecker {
             current_return_type: None,
             enums: HashMap::new(),
             current_effects: None,
+            in_test: false,
         }
     }
 
@@ -381,6 +386,70 @@ impl TypeChecker {
                     return Err(TypeError::EmptyEnum {
                         name: name.clone(),
                         span: stmt.span,
+                    });
+                }
+                Ok(())
+            }
+            StmtKind::Test { body, .. } => {
+                self.push_scope();
+                let previous_in_test = std::mem::replace(&mut self.in_test, true);
+                let result = self.check_block(body);
+                self.in_test = previous_in_test;
+                self.pop_scope();
+                result
+            }
+            StmtKind::Mock { function, value } => {
+                if !self.in_test {
+                    return Err(TypeError::Mismatch {
+                        message: "`mock` can only appear inside a `test` block".to_string(),
+                        span: stmt.span,
+                    });
+                }
+                let sig = match self.lookup(function) {
+                    Some(Binding::Function(sig))
+                        if matches!(sig.mode, CallMode::Infer | CallMode::ToolCall) =>
+                    {
+                        sig.clone()
+                    }
+                    Some(Binding::Function(_)) => {
+                        return Err(TypeError::Mismatch {
+                            message: format!(
+                                "`{function}` is not an `infer` or `tool` declaration"
+                            ),
+                            span: stmt.span,
+                        });
+                    }
+                    Some(_) => {
+                        return Err(TypeError::Mismatch {
+                            message: format!("`{function}` is not an `infer` or `tool`"),
+                            span: stmt.span,
+                        });
+                    }
+                    None => {
+                        return Err(TypeError::UndefinedFunction {
+                            name: function.clone(),
+                            span: stmt.span,
+                        });
+                    }
+                };
+                let value_ty = self.check_expr(value)?;
+                if value_ty != sig.return_type {
+                    return Err(TypeError::Mismatch {
+                        message: format!(
+                            "`mock {function}` expects {}, found {value_ty}",
+                            sig.return_type
+                        ),
+                        span: value.span,
+                    });
+                }
+                Ok(())
+            }
+            StmtKind::Assert { condition } => {
+                let ty = self.check_expr(condition)?;
+                if ty != Type::Bool {
+                    return Err(TypeError::Mismatch {
+                        message: format!("`assert` expects Bool, found {ty}"),
+                        span: condition.span,
                     });
                 }
                 Ok(())
@@ -1519,5 +1588,85 @@ mod tests {
              async fn f() -> Bool effects [inference] { return await classify(\"x\") }"
         )
         .is_ok());
+    }
+
+    // --- test / mock / assert (milestone 15) ----------------------------
+
+    #[test]
+    fn accepts_a_well_formed_test_block() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             infer classify(text: String) -> Sentiment\n\
+             test \"positive review\" {\n\
+                 mock classify -> Sentiment_Positive\n\
+                 assert await classify(\"great\") == Sentiment_Positive\n\
+             }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn mock_outside_a_test_block_is_rejected() {
+        let err = check(
+            "infer classify(text: String) -> Bool\n\
+             mock classify -> true",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn mock_of_a_plain_fn_is_rejected() {
+        let err = check(
+            "fn helper() -> Bool { return true }\n\
+             test \"x\" { mock helper -> true }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn mock_of_an_undeclared_function_is_undefined() {
+        let err = check("test \"x\" { mock nonexistent -> true }").unwrap_err();
+        assert!(matches!(err, TypeError::UndefinedFunction { .. }));
+    }
+
+    #[test]
+    fn mock_value_type_must_match_declared_return_type() {
+        let err = check(
+            "infer classify(text: String) -> Bool\n\
+             test \"x\" { mock classify -> 1 }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn mock_can_target_a_tool_too() {
+        assert!(check(
+            "tool database_get_email(id: String) -> String\n\
+             test \"x\" {\n\
+                 mock database_get_email -> \"a@b.com\"\n\
+                 assert await database_get_email(\"1\") == \"a@b.com\"\n\
+             }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn assert_requires_a_bool_condition() {
+        let err = check("assert 1").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn assert_works_outside_test_blocks_too() {
+        assert!(check("assert 1 == 1").is_ok());
+    }
+
+    #[test]
+    fn test_block_gets_its_own_scope() {
+        let err = check("test \"x\" { let y = 1 }\nprint(y)").unwrap_err();
+        assert!(matches!(err, TypeError::UndefinedVariable { .. }));
     }
 }

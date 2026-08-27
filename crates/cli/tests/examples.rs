@@ -18,6 +18,14 @@ fn run_aint(path: &str) -> Output {
         .expect("failed to spawn the aint binary")
 }
 
+fn test_aint(path: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_aint"))
+        .arg("test")
+        .arg(path)
+        .output()
+        .expect("failed to spawn the aint binary")
+}
+
 #[test]
 fn hello_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("hello.an"));
@@ -166,4 +174,53 @@ fn awaiting_an_unconfigured_tool_call_fails_clearly_through_the_real_binary() {
         stderr.contains("no mock response configured for `database_get_email`"),
         "expected the tool-error message on stderr, got: {stderr}"
     );
+}
+
+/// `examples/testing.an` (milestone 15) — the first example able to
+/// meaningfully use `infer`/`tool` at all, since `aint test` is
+/// finally the AINT-level way to configure what they return. All
+/// three of its tests are expected to pass.
+#[test]
+fn testing_an_all_tests_pass_via_aint_test() {
+    let output = test_aint(&example_path("testing.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("3 run, 3 passed, 0 failed"),
+        "expected a passing summary, got: {stdout}"
+    );
+    assert!(stdout.contains("positive review gets a thank-you"));
+    assert!(stdout.contains("negative review gets acknowledged"));
+    assert!(stdout.contains("neutral review still gets acknowledged"));
+}
+
+/// `test` blocks are inert during `aint run` — the file has no
+/// top-level `print`, so running it should produce no output and
+/// exit cleanly, same as any other example.
+#[test]
+fn testing_an_runs_cleanly_via_aint_run_too() {
+    let output = run_aint(&example_path("testing.an"));
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn aint_test_reports_a_failing_assertion_and_exits_nonzero() {
+    let path = std::env::temp_dir().join(format!("aint_cli_test_fail_{}.an", std::process::id()));
+    std::fs::write(
+        &path,
+        "test \"this should fail\" {\n\
+             assert 1 == 2\n\
+         }\n",
+    )
+    .expect("failed to write a temporary .an file");
+
+    let output = test_aint(path.to_str().expect("temp path should be utf8"));
+    std::fs::remove_file(&path).ok();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("this should fail"));
+    assert!(stdout.contains("FAILED"));
+    assert!(stdout.contains("1 run, 0 passed, 1 failed"));
 }

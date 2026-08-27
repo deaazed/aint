@@ -1,16 +1,20 @@
 //! `aint` — the command-line entry point for the AINT toolchain.
 //!
-//! Only `aint run <file>` exists right now: it lexes, parses,
-//! type-checks, and interprets a `.an` file end to end, driven by a
-//! Tokio runtime so `async`/`await` are real (milestone 07). A type
-//! error stops the program before the interpreter ever runs it. This
-//! command exists so the CLI shape is fixed early and every later
-//! milestone has a real place to plug into. See ROADMAP.md.
+//! `aint run <file>` lexes, parses, type-checks, and interprets a
+//! `.an` file end to end, driven by a Tokio runtime so `async`/`await`
+//! are real (milestone 07). A type error stops the program before the
+//! interpreter ever runs it.
+//!
+//! `aint test <file>` (milestone 15) runs every top-level `test` block
+//! in a file, each in its own fresh, isolated `Interpreter` configured
+//! from that block's own `mock` statements — see
+//! `docs/milestones/15-deterministic-ai-testing/SPEC.md`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use aint_ast::Program;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -28,6 +32,11 @@ struct Cli {
 enum Command {
     /// Run an AINT source file.
     Run {
+        /// Path to a .an source file.
+        path: PathBuf,
+    },
+    /// Run every `test` block in an AINT source file.
+    Test {
         /// Path to a .an source file.
         path: PathBuf,
     },
@@ -49,43 +58,53 @@ fn main() -> ExitCode {
         .stack_size(STACK_SIZE)
         .spawn(move || match cli.command {
             Command::Run { path } => run(&path),
+            Command::Test { path } => test(&path),
         })
         .expect("failed to spawn the interpreter thread")
         .join()
         .expect("the interpreter thread panicked")
 }
 
-fn run(path: &Path) -> ExitCode {
-    let source = match fs::read_to_string(path) {
-        Ok(source) => source,
-        Err(err) => {
-            eprintln!("error: could not read {}: {err}", path.display());
-            return ExitCode::FAILURE;
-        }
-    };
+/// Reads, parses, and type-checks `path` — the first three steps
+/// `run` and `test` both need, and both report failures in it
+/// identically.
+fn parse_and_check(path: &Path) -> Result<Program, ExitCode> {
+    let source = fs::read_to_string(path).map_err(|err| {
+        eprintln!("error: could not read {}: {err}", path.display());
+        ExitCode::FAILURE
+    })?;
 
-    let program = match aint_parser::parse_source(&source) {
-        Ok(program) => program,
-        Err(err) => {
-            eprintln!("{}:{}", path.display(), err);
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if let Err(err) = aint_typechecker::check_program(&program) {
+    let program = aint_parser::parse_source(&source).map_err(|err| {
         eprintln!("{}:{}", path.display(), err);
-        return ExitCode::FAILURE;
-    }
+        ExitCode::FAILURE
+    })?;
 
-    let runtime = match tokio::runtime::Builder::new_current_thread()
+    aint_typechecker::check_program(&program).map_err(|err| {
+        eprintln!("{}:{}", path.display(), err);
+        ExitCode::FAILURE
+    })?;
+
+    Ok(program)
+}
+
+fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-    {
-        Ok(runtime) => runtime,
-        Err(err) => {
+        .map_err(|err| {
             eprintln!("error: could not start the async runtime: {err}");
-            return ExitCode::FAILURE;
-        }
+            ExitCode::FAILURE
+        })
+}
+
+fn run(path: &Path) -> ExitCode {
+    let program = match parse_and_check(path) {
+        Ok(program) => program,
+        Err(code) => return code,
+    };
+    let runtime = match build_tokio_runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
     };
 
     let interpreter = aint_runtime::Interpreter::new();
@@ -95,5 +114,44 @@ fn run(path: &Path) -> ExitCode {
             eprintln!("{}:{}", path.display(), err);
             ExitCode::FAILURE
         }
+    }
+}
+
+fn test(path: &Path) -> ExitCode {
+    let program = match parse_and_check(path) {
+        Ok(program) => program,
+        Err(code) => return code,
+    };
+    let runtime = match build_tokio_runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+
+    let outcomes = runtime.block_on(aint_runtime::run_tests(&program));
+    if outcomes.is_empty() {
+        println!("no test blocks found in {}", path.display());
+        return ExitCode::SUCCESS;
+    }
+
+    let mut failed = 0usize;
+    for outcome in &outcomes {
+        match &outcome.result {
+            Ok(()) => println!("test \"{}\" ... ok", outcome.name),
+            Err(err) => {
+                failed += 1;
+                println!("test \"{}\" ... FAILED", outcome.name);
+                println!("  {}:{err}", path.display());
+            }
+        }
+    }
+
+    let passed = outcomes.len() - failed;
+    println!();
+    println!("{} run, {passed} passed, {failed} failed", outcomes.len());
+
+    if failed == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
