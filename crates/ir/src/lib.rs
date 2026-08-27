@@ -9,6 +9,8 @@
 
 mod air;
 mod lower;
+mod optimize;
 
 pub use air::{AirBlock, AirExpr, AirProgram, AirStmt, DistributionOp};
 pub use lower::{lower, LowerError};
+pub use optimize::{optimize, OptimizationStats};

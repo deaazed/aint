@@ -126,7 +126,7 @@ Once surface semantics have stabilized: typed AST -> AIR, with explicit
 `INFER`, `TOOL_CALL`, `DISTRIBUTION`, `PROBABILITY` operations instead of
 generic calls.
 
-## 19 — Optimization
+## 19 — Optimization — done
 
 Inference caching, parallel inference, model routing, tool
 parallelization, request batching, prompt caching, memoization — now
