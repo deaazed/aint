@@ -132,7 +132,7 @@ Inference caching, parallel inference, model routing, tool
 parallelization, request batching, prompt caching, memoization — now
 possible because AIR makes AI operations visible to the compiler.
 
-## 20 — Security model
+## 20 — Security model — done
 
 Permissions, sandboxing, filesystem/network restrictions, tool
 authorization, secret management, resource limits. Non-optional once a

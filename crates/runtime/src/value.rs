@@ -89,22 +89,32 @@ impl Task {
 /// it's needed now to validate the model's response against it at
 /// `await` time. See
 /// `docs/milestones/09-typed-structured-inference/SPEC.md`.
+/// `permissions` is milestone 20's addition: `None` means every
+/// declared `tool` is available to this inference's model
+/// conversation (unrestricted, matching every program written before
+/// this milestone); `Some(names)` restricts it to exactly those tool
+/// names. See `docs/milestones/20-security-model/SPEC.md`.
 #[derive(Debug, PartialEq)]
 pub struct InferenceFn {
     pub name: String,
     pub params: Vec<String>,
     pub return_type: Type,
+    pub permissions: Option<Vec<String>>,
 }
 
 /// The deferred computation behind a [`Value::Inference`]: which
 /// `infer` function, its already-evaluated argument values, and its
 /// declared return type — all captured at call time, exactly like
 /// `args`, so `await` doesn't need to re-look-up the function.
+/// `permissions` is carried the same way, so `eval_inference_loop` can
+/// enforce it without a separate lookup back to the declaration. See
+/// `docs/milestones/20-security-model/SPEC.md`.
 #[derive(Debug, PartialEq)]
 pub struct PendingInference {
     pub function: String,
     pub args: Vec<Value>,
     pub return_type: Type,
+    pub permissions: Option<Vec<String>>,
 }
 
 /// A `tool`-declared function: name, parameter *types* (not names —

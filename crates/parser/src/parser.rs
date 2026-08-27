@@ -371,15 +371,47 @@ impl Parser {
         self.expect(TokenKind::RightParen, "`)`")?;
         self.expect(TokenKind::Arrow, "`->`")?;
         let (return_type, return_span) = self.parse_type()?;
-        let span = Span::new(infer_token.span.start, return_span.end);
+        let (permissions, permissions_end) = self.parse_permissions_clause()?;
+        let span = Span::new(
+            infer_token.span.start,
+            permissions_end.unwrap_or(return_span.end),
+        );
         Ok(Stmt::new(
             StmtKind::Infer {
                 name,
                 params,
                 return_type,
+                permissions,
             },
             span,
         ))
+    }
+
+    /// Parses an optional `permissions [ name, name, ... ]` clause —
+    /// `infer` only. Absent entirely (not `Permissions` being the
+    /// current token) means unrestricted, not "no tools allowed" — see
+    /// `docs/milestones/20-security-model/SPEC.md`. Returns the end
+    /// position of the closing `]` when present, so the caller can
+    /// extend the statement's span to cover it.
+    fn parse_permissions_clause(
+        &mut self,
+    ) -> Result<(Option<Vec<String>>, Option<Position>), ParseError> {
+        if !self.matches(&TokenKind::Permissions) {
+            return Ok((None, None));
+        }
+        self.expect(TokenKind::LeftBracket, "`[`")?;
+        let mut names = Vec::new();
+        if !self.check(&TokenKind::RightBracket) {
+            loop {
+                let (name, _) = self.expect_identifier()?;
+                names.push(name);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        let close = self.expect(TokenKind::RightBracket, "`]`")?;
+        Ok((Some(names), Some(close.span.end)))
     }
 
     /// Parses `tool name(params) -> Type` — no body, same shape as
@@ -1038,6 +1070,7 @@ mod tests {
                 name,
                 params,
                 return_type,
+                permissions,
             } => {
                 assert_eq!(name, "is_positive");
                 assert_eq!(
@@ -1048,6 +1081,7 @@ mod tests {
                     }]
                 );
                 assert_eq!(return_type, Type::Bool);
+                assert_eq!(permissions, None);
             }
             other => panic!("expected Infer, got {other:?}"),
         }
@@ -1058,6 +1092,47 @@ mod tests {
         let stmt = parse_one_stmt("infer greeting() -> String");
         match stmt.kind {
             StmtKind::Infer { params, .. } => assert!(params.is_empty()),
+            other => panic!("expected Infer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_infer_statement_with_a_permissions_clause() {
+        let stmt = parse_one_stmt(
+            "infer summarize(id: String) -> String permissions [database_get_email]",
+        );
+        match stmt.kind {
+            StmtKind::Infer { permissions, .. } => {
+                assert_eq!(permissions, Some(vec!["database_get_email".to_string()]));
+            }
+            other => panic!("expected Infer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_infer_statement_with_a_multi_tool_permissions_clause() {
+        let stmt = parse_one_stmt(
+            "infer summarize(id: String) -> String permissions [database_get_email, database_get_name]",
+        );
+        match stmt.kind {
+            StmtKind::Infer { permissions, .. } => {
+                assert_eq!(
+                    permissions,
+                    Some(vec![
+                        "database_get_email".to_string(),
+                        "database_get_name".to_string(),
+                    ])
+                );
+            }
+            other => panic!("expected Infer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_infer_statement_with_an_empty_permissions_clause() {
+        let stmt = parse_one_stmt("infer summarize(id: String) -> String permissions []");
+        match stmt.kind {
+            StmtKind::Infer { permissions, .. } => assert_eq!(permissions, Some(vec![])),
             other => panic!("expected Infer, got {other:?}"),
         }
     }

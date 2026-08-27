@@ -1,0 +1,13 @@
+tool database_get_email(id: String) -> String
+tool send_email(to: String, body: String) -> Bool
+
+infer summarize(id: String) -> String permissions [database_get_email]
+
+fn summary_for(id: String) -> String {
+    return await summarize(id)
+}
+
+test "summarize can still be mocked normally with permissions declared" {
+    mock summarize -> "customer 42 prefers email contact"
+    assert summary_for("42") == "customer 42 prefers email contact"
+}

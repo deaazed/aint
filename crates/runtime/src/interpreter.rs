@@ -226,17 +226,22 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 name,
                 params,
                 return_type,
+                permissions,
             } => {
                 // Same reasoning as `StmtKind::Fn` above: the type
                 // checker already validated this signature, so the
                 // interpreter only needs param names — there's no body
                 // at all, unlike `Fn`. `return_type` *is* needed now
                 // (milestone 09), to validate the model's response
-                // against it once awaited.
+                // against it once awaited. `permissions` (milestone 20)
+                // is carried through unchanged — the type checker
+                // already validated every name in it refers to a
+                // declared `tool`.
                 let infer_fn = Value::InferenceFn(Rc::new(InferenceFn {
                     name: name.clone(),
                     params: params.iter().map(|p| p.name.clone()).collect(),
                     return_type: return_type.clone(),
+                    permissions: permissions.clone(),
                 }));
                 env.borrow_mut().define(name.clone(), infer_fn);
                 Ok(Flow::Normal)
@@ -524,6 +529,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     function: infer_fn.name.clone(),
                     args,
                     return_type: infer_fn.return_type.clone(),
+                    permissions: infer_fn.permissions.clone(),
                 })))
             }
             Value::ToolFn(tool_fn) => {
@@ -635,7 +641,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     function: pending.function.clone(),
                     args: pending.args.clone(),
                     return_type: pending.return_type.clone(),
-                    available_tools: self.available_tools(),
+                    available_tools: self.available_tools_for(&pending.permissions),
                     history: history.clone(),
                     span,
                 })
@@ -669,6 +675,12 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     return Ok(value);
                 }
                 InferenceOutcome::CallTool { tool, args } => {
+                    self.check_tool_permission(
+                        &pending.function,
+                        &pending.permissions,
+                        &tool,
+                        span,
+                    )?;
                     let result = self.call_requested_tool(&tool, args.clone(), span).await?;
                     history.push(ToolExchange { tool, args, result });
                 }
@@ -736,18 +748,57 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         Ok(())
     }
 
-    /// The signature of every declared `tool`, as a `Model` sees it —
-    /// what `InferenceRequest::available_tools` is built from.
-    fn available_tools(&self) -> Vec<ToolSignature> {
+    /// The signature of every declared `tool` this particular
+    /// inference is allowed to see, as a `Model` sees it — what
+    /// `InferenceRequest::available_tools` is built from.
+    /// `permissions: None` (no clause on the `infer` declaration) means
+    /// every declared tool, unrestricted — the behavior every program
+    /// had before milestone 20. `Some(names)` filters down to exactly
+    /// those. This is the "what's offered" half of tool authorization;
+    /// `check_tool_permission` is the "what's allowed to execute" half,
+    /// enforced independently. See
+    /// `docs/milestones/20-security-model/SPEC.md`.
+    fn available_tools_for(&self, permissions: &Option<Vec<String>>) -> Vec<ToolSignature> {
         self.tools_registry
             .borrow()
             .values()
+            .filter(|tool_fn| match permissions {
+                Some(names) => names.iter().any(|name| name == &tool_fn.name),
+                None => true,
+            })
             .map(|tool_fn| ToolSignature {
                 name: tool_fn.name.clone(),
                 params: tool_fn.params.clone(),
                 return_type: tool_fn.return_type.clone(),
             })
             .collect()
+    }
+
+    /// Rejects a model-requested tool call outside the requesting
+    /// `infer`'s `permissions`, *before* it runs — independent of
+    /// whether the tool was ever offered via `available_tools_for`. A
+    /// model implementation that ignores what it was told is available
+    /// and asks for something else anyway does not get a free pass;
+    /// the enforcement point is here, at the actual call, not just the
+    /// request construction. See
+    /// `docs/milestones/20-security-model/SPEC.md`.
+    fn check_tool_permission(
+        &self,
+        function: &str,
+        permissions: &Option<Vec<String>>,
+        tool: &str,
+        span: Span,
+    ) -> Result<(), RuntimeError> {
+        if let Some(names) = permissions {
+            if !names.iter().any(|name| name == tool) {
+                return Err(RuntimeError::PermissionDenied {
+                    tool: tool.to_string(),
+                    function: function.to_string(),
+                    span,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Runs a tool call *requested by a model*, not written in AINT
@@ -2120,6 +2171,122 @@ mod tests {
                 .expect_err("should produce a runtime error")
         });
         assert!(matches!(err, RuntimeError::ToolError { .. }));
+    }
+
+    #[test]
+    fn a_permitted_tool_call_still_succeeds() {
+        // `permissions` naming exactly the tool the model requests:
+        // the conversation proceeds exactly as it would with no
+        // `permissions` clause at all.
+        assert_eq!(
+            run_capturing_with_model_and_tools(
+                "tool database_get_email(id: String) -> String\n\
+                 tool send_email(to: String, body: String) -> Bool\n\
+                 infer greet_customer(id: String) -> String permissions [database_get_email]\n\
+                 print(await greet_customer(\"42\"))",
+                || {
+                    crate::model::MockModel::new().script(
+                        "greet_customer",
+                        vec![
+                            crate::model::InferenceOutcome::CallTool {
+                                tool: "database_get_email".to_string(),
+                                args: vec![Value::String("42".to_string())],
+                            },
+                            crate::model::InferenceOutcome::Answer(Value::String(
+                                "Hello, a@b.com".to_string(),
+                            )),
+                        ],
+                    )
+                },
+                || {
+                    crate::tool::MockTool::new()
+                        .mock("database_get_email", Value::String("a@b.com".to_string()))
+                },
+            ),
+            "Hello, a@b.com\n"
+        );
+    }
+
+    #[test]
+    fn a_tool_call_outside_permissions_is_rejected_even_though_the_tool_is_declared() {
+        // `send_email` is a real, declared tool elsewhere in the same
+        // program - just not one `greet_customer` is permitted to
+        // request. This is the enforcement half, independent of
+        // whether the model was ever offered `send_email` in
+        // `available_tools` (it wasn't, but the check doesn't rely on
+        // the model having behaved).
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_email(id: String) -> String\n\
+                 tool send_email(to: String, body: String) -> Bool\n\
+                 infer greet_customer(id: String) -> String permissions [database_get_email]\n\
+                 await greet_customer(\"42\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().script(
+                "greet_customer",
+                vec![crate::model::InferenceOutcome::CallTool {
+                    tool: "send_email".to_string(),
+                    args: vec![
+                        Value::String("a@b.com".to_string()),
+                        Value::String("hi".to_string()),
+                    ],
+                }],
+            );
+            let interpreter = Interpreter::with_output_model_and_tools(
+                Vec::new(),
+                model,
+                crate::tool::MockTool::new().mock("send_email", Value::Bool(true)),
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        match err {
+            RuntimeError::PermissionDenied { tool, function, .. } => {
+                assert_eq!(tool, "send_email");
+                assert_eq!(function, "greet_customer");
+            }
+            other => panic!("expected PermissionDenied, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_infer_with_no_permissions_clause_can_call_any_declared_tool() {
+        // The default-unrestricted behavior every program from
+        // milestone 12 onward already relies on - unaffected by this
+        // milestone unless a program opts into `permissions`.
+        assert_eq!(
+            run_capturing_with_model_and_tools(
+                "tool database_get_email(id: String) -> String\n\
+                 tool send_email(to: String, body: String) -> Bool\n\
+                 infer greet_customer(id: String) -> String\n\
+                 print(await greet_customer(\"42\"))",
+                || {
+                    crate::model::MockModel::new().script(
+                        "greet_customer",
+                        vec![
+                            crate::model::InferenceOutcome::CallTool {
+                                tool: "send_email".to_string(),
+                                args: vec![
+                                    Value::String("a@b.com".to_string()),
+                                    Value::String("hi".to_string()),
+                                ],
+                            },
+                            crate::model::InferenceOutcome::Answer(Value::String(
+                                "done".to_string(),
+                            )),
+                        ],
+                    )
+                },
+                || crate::tool::MockTool::new().mock("send_email", Value::Bool(true)),
+            ),
+            "done\n"
+        );
     }
 
     #[test]

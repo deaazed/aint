@@ -87,6 +87,16 @@ pub enum RuntimeError {
         message: String,
         span: Span,
     },
+    /// A model requested a tool call outside the requesting `infer`
+    /// declaration's `permissions` — the runtime refusing to execute
+    /// it, independent of whether it was ever offered to the model in
+    /// the first place. See
+    /// `docs/milestones/20-security-model/SPEC.md`.
+    PermissionDenied {
+        tool: String,
+        function: String,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -107,7 +117,8 @@ impl RuntimeError {
             | RuntimeError::ToolError { span, .. }
             | RuntimeError::AssertionFailed { span }
             | RuntimeError::UnsupportedMockValue { span, .. }
-            | RuntimeError::BudgetExceeded { span, .. } => *span,
+            | RuntimeError::BudgetExceeded { span, .. }
+            | RuntimeError::PermissionDenied { span, .. } => *span,
         }
     }
 }
@@ -163,6 +174,15 @@ impl fmt::Display for RuntimeError {
             RuntimeError::BudgetExceeded { message, span } => {
                 write!(f, "{}: budget exceeded: {message}", span.start)
             }
+            RuntimeError::PermissionDenied {
+                tool,
+                function,
+                span,
+            } => write!(
+                f,
+                "{}: `{function}` is not permitted to call tool `{tool}`",
+                span.start
+            ),
         }
     }
 }

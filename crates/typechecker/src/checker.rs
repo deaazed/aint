@@ -180,6 +180,7 @@ impl TypeChecker {
                     name,
                     params,
                     return_type,
+                    ..
                 } => {
                     self.define(
                         name.clone(),
@@ -341,6 +342,7 @@ impl TypeChecker {
                 name,
                 params,
                 return_type,
+                permissions,
             } => {
                 // Redundant for a hoisted top-level `infer` (already
                 // bound above), same reasoning as `Fn`'s redundant
@@ -360,6 +362,26 @@ impl TypeChecker {
                     self.validate_type(&param.ty, stmt.span)?;
                 }
                 self.validate_type(return_type, stmt.span)?;
+                // Milestone 20: every name in a `permissions` clause
+                // must actually name a declared `tool` — a typo, an
+                // `infer`, a plain `fn`, or nothing at all is caught
+                // here rather than silently never matching at runtime.
+                // Tool declarations are hoisted before any `check_stmt`
+                // runs (see `check`'s second pass), so this sees tools
+                // declared later in the file too.
+                if let Some(names) = permissions {
+                    for tool_name in names {
+                        match self.lookup(tool_name) {
+                            Some(Binding::Function(sig)) if sig.mode == CallMode::ToolCall => {}
+                            _ => {
+                                return Err(TypeError::UnknownTool {
+                                    name: tool_name.clone(),
+                                    span: stmt.span,
+                                });
+                            }
+                        }
+                    }
+                }
                 Ok(())
             }
             StmtKind::Tool {
@@ -1661,6 +1683,68 @@ mod tests {
                  mock database_get_email -> \"a@b.com\"\n\
                  assert await database_get_email(\"1\") == \"a@b.com\"\n\
              }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn permissions_clause_naming_a_declared_tool_is_accepted() {
+        assert!(check(
+            "tool database_get_email(id: String) -> String\n\
+             infer summarize(id: String) -> String permissions [database_get_email]"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn permissions_clause_can_name_a_tool_declared_later_in_the_file() {
+        // Tools are hoisted before any `check_stmt` runs (same pass
+        // that hoists `fn`/`infer`), so a `permissions` clause can name
+        // a tool that appears later in the source.
+        assert!(check(
+            "infer summarize(id: String) -> String permissions [database_get_email]\n\
+             tool database_get_email(id: String) -> String"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn permissions_clause_naming_an_undeclared_tool_is_rejected() {
+        let err = check("infer summarize(id: String) -> String permissions [nonexistent_tool]")
+            .unwrap_err();
+        assert!(matches!(err, TypeError::UnknownTool { .. }));
+    }
+
+    #[test]
+    fn permissions_clause_naming_an_infer_instead_of_a_tool_is_rejected() {
+        let err = check(
+            "infer classify(text: String) -> Bool\n\
+             infer summarize(id: String) -> String permissions [classify]",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::UnknownTool { .. }));
+    }
+
+    #[test]
+    fn permissions_clause_naming_a_plain_fn_is_rejected() {
+        let err = check(
+            "fn helper() -> Bool { return true }\n\
+             infer summarize(id: String) -> String permissions [helper]",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::UnknownTool { .. }));
+    }
+
+    #[test]
+    fn empty_permissions_clause_is_accepted_and_means_no_tools_at_all() {
+        assert!(check("infer summarize(id: String) -> String permissions []").is_ok());
+    }
+
+    #[test]
+    fn infer_without_a_permissions_clause_is_unaffected() {
+        assert!(check(
+            "tool database_get_email(id: String) -> String\n\
+             infer summarize(id: String) -> String"
         )
         .is_ok());
     }

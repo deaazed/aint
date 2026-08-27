@@ -78,6 +78,14 @@ pub enum TypeError {
     DuplicateBudget {
         span: Span,
     },
+    /// A name inside an `infer`'s `permissions [...]` clause that
+    /// doesn't refer to a declared `tool` — a typo, an `infer`, a
+    /// plain `fn`, or nothing at all. See
+    /// `docs/milestones/20-security-model/SPEC.md`.
+    UnknownTool {
+        name: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -97,7 +105,8 @@ impl TypeError {
             | TypeError::UnknownType { span, .. }
             | TypeError::EmptyEnum { span, .. }
             | TypeError::EffectMismatch { span, .. }
-            | TypeError::DuplicateBudget { span } => *span,
+            | TypeError::DuplicateBudget { span }
+            | TypeError::UnknownTool { span, .. } => *span,
         }
     }
 }
@@ -174,6 +183,13 @@ impl fmt::Display for TypeError {
             ),
             TypeError::DuplicateBudget { span } => {
                 write!(f, "{}: a program can only have one `budget` block", span.start)
+            }
+            TypeError::UnknownTool { name, span } => {
+                write!(
+                    f,
+                    "{}: `permissions` names `{name}`, which isn't a declared `tool`",
+                    span.start
+                )
             }
         }
     }

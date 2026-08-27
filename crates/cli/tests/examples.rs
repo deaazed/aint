@@ -204,6 +204,32 @@ fn testing_an_runs_cleanly_via_aint_run_too() {
     assert!(output.stdout.is_empty());
 }
 
+/// `examples/security.an` (milestone 20) — a `permissions`-restricted
+/// `infer` type-checks and still behaves normally through `aint test`
+/// when mocked with a direct answer. The tool-call enforcement itself
+/// (rejecting a model-requested call outside `permissions`) has no
+/// AINT-source-level way to exercise it: `mock` can only script a
+/// direct answer, not a `CallTool` outcome (milestone 15's DSL never
+/// grew that), so it's covered by Rust-level interpreter tests
+/// instead. See `docs/milestones/20-security-model/SPEC.md`.
+#[test]
+fn security_an_passes_via_aint_test() {
+    let output = test_aint(&example_path("security.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("1 run, 1 passed, 0 failed"),
+        "expected a passing summary, got: {stdout}"
+    );
+}
+
+#[test]
+fn security_an_runs_cleanly_via_aint_run_too() {
+    let output = run_aint(&example_path("security.an"));
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+}
+
 #[test]
 fn aint_test_reports_a_failing_assertion_and_exits_nonzero() {
     let path = std::env::temp_dir().join(format!("aint_cli_test_fail_{}.an", std::process::id()));

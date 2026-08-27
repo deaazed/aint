@@ -45,10 +45,18 @@ pub enum StmtKind {
     /// body. The implementation is external (a model), not AINT source
     /// — see `docs/milestones/08-first-ai-primitive/SPEC.md` for why
     /// this doesn't reuse `Fn`'s shape.
+    ///
+    /// `permissions` is milestone 20's addition: an optional allowlist
+    /// of declared `tool` names this inference's model conversation
+    /// may request. `None` means unrestricted (every declared tool
+    /// available), matching every program written before this
+    /// milestone existed. See
+    /// `docs/milestones/20-security-model/SPEC.md`.
     Infer {
         name: String,
         params: Vec<Param>,
         return_type: Type,
+        permissions: Option<Vec<String>>,
     },
     /// `enum Name { Variant1 Variant2 ... }`. Variant values aren't a
     /// separate AST node — see

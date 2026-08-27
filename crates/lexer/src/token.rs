@@ -29,6 +29,7 @@ pub enum TokenKind {
     Mock,
     Assert,
     Budget,
+    Permissions,
 
     // Operators
     Plus,
@@ -80,6 +81,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Mock => write!(f, "`mock`"),
             TokenKind::Assert => write!(f, "`assert`"),
             TokenKind::Budget => write!(f, "`budget`"),
+            TokenKind::Permissions => write!(f, "`permissions`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -136,6 +138,7 @@ pub(crate) fn keyword(word: &str) -> Option<TokenKind> {
         "mock" => TokenKind::Mock,
         "assert" => TokenKind::Assert,
         "budget" => TokenKind::Budget,
+        "permissions" => TokenKind::Permissions,
         _ => return None,
     })
 }
