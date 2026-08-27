@@ -73,6 +73,11 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    /// A second `budget` block in the same program. See
+    /// `docs/milestones/17-ai-resource-management/SPEC.md`.
+    DuplicateBudget {
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -91,7 +96,8 @@ impl TypeError {
             | TypeError::UnknownModule { span, .. }
             | TypeError::UnknownType { span, .. }
             | TypeError::EmptyEnum { span, .. }
-            | TypeError::EffectMismatch { span, .. } => *span,
+            | TypeError::EffectMismatch { span, .. }
+            | TypeError::DuplicateBudget { span } => *span,
         }
     }
 }
@@ -166,6 +172,9 @@ impl fmt::Display for TypeError {
                 "{}: `{name}` cannot be called here; its effects aren't declared compatible with the caller's `effects` clause",
                 span.start
             ),
+            TypeError::DuplicateBudget { span } => {
+                write!(f, "{}: a program can only have one `budget` block", span.start)
+            }
         }
     }
 }

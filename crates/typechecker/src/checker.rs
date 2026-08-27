@@ -107,6 +107,10 @@ pub struct TypeChecker {
     /// `test` block's body — `mock` is a type error everywhere else.
     /// See `docs/milestones/15-deterministic-ai-testing/SPEC.md`.
     in_test: bool,
+    /// Whether a `budget` block has already been seen — a second one
+    /// is a type error, not last-write-wins. See
+    /// `docs/milestones/17-ai-resource-management/SPEC.md`.
+    has_budget: bool,
 }
 
 impl Default for TypeChecker {
@@ -123,6 +127,7 @@ impl TypeChecker {
             enums: HashMap::new(),
             current_effects: None,
             in_test: false,
+            has_budget: false,
         }
     }
 
@@ -452,6 +457,13 @@ impl TypeChecker {
                         span: condition.span,
                     });
                 }
+                Ok(())
+            }
+            StmtKind::Budget { .. } => {
+                if self.has_budget {
+                    return Err(TypeError::DuplicateBudget { span: stmt.span });
+                }
+                self.has_budget = true;
                 Ok(())
             }
             StmtKind::Return(value) => {
@@ -1668,5 +1680,23 @@ mod tests {
     fn test_block_gets_its_own_scope() {
         let err = check("test \"x\" { let y = 1 }\nprint(y)").unwrap_err();
         assert!(matches!(err, TypeError::UndefinedVariable { .. }));
+    }
+
+    // --- budget (milestone 17) -----------------------------------------
+
+    #[test]
+    fn accepts_a_budget_block() {
+        assert!(check("budget { max_model_calls = 3 timeout_ms = 5000 }").is_ok());
+    }
+
+    #[test]
+    fn rejects_a_second_budget_block() {
+        let err = check("budget { max_model_calls = 3 }\nbudget { max_tokens = 100 }").unwrap_err();
+        assert!(matches!(err, TypeError::DuplicateBudget { .. }));
+    }
+
+    #[test]
+    fn programs_without_a_budget_block_are_unaffected() {
+        assert!(check("print(1)").is_ok());
     }
 }

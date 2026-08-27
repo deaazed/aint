@@ -92,6 +92,17 @@ pub enum StmtKind {
     Assert {
         condition: Expr,
     },
+    /// `budget { max_tokens = ... max_model_calls = ... max_cost = ...
+    /// timeout_ms = ... }` — a single, program-wide resource ceiling.
+    /// Every field is optional (`None` means unlimited on that axis).
+    /// See `docs/milestones/17-ai-resource-management/SPEC.md` for why
+    /// `timeout_ms` (a plain integer) instead of a duration literal.
+    Budget {
+        max_tokens: Option<i64>,
+        max_model_calls: Option<i64>,
+        max_cost: Option<f64>,
+        timeout_ms: Option<i64>,
+    },
 }
 
 /// One of the five effect words `ROADMAP.md` names. See

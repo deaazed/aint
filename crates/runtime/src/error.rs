@@ -80,6 +80,13 @@ pub enum RuntimeError {
         message: String,
         span: Span,
     },
+    /// A `budget` limit was hit — the runtime refusing to let an
+    /// inference conversation continue, not a model or tool failing.
+    /// See `docs/milestones/17-ai-resource-management/SPEC.md`.
+    BudgetExceeded {
+        message: String,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -99,7 +106,8 @@ impl RuntimeError {
             | RuntimeError::SchemaViolation { span, .. }
             | RuntimeError::ToolError { span, .. }
             | RuntimeError::AssertionFailed { span }
-            | RuntimeError::UnsupportedMockValue { span, .. } => *span,
+            | RuntimeError::UnsupportedMockValue { span, .. }
+            | RuntimeError::BudgetExceeded { span, .. } => *span,
         }
     }
 }
@@ -151,6 +159,9 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::UnsupportedMockValue { message, span } => {
                 write!(f, "{}: unsupported mock value: {message}", span.start)
+            }
+            RuntimeError::BudgetExceeded { message, span } => {
+                write!(f, "{}: budget exceeded: {message}", span.start)
             }
         }
     }

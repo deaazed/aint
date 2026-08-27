@@ -115,7 +115,7 @@ offline.
 `Model` implementations beyond `Mock`: vLLM, OpenAI-compatible APIs,
 Ollama. Source code never names a vendor; deployment config does.
 
-## 17 — AI resource management
+## 17 — AI resource management — done
 
 `budget { max_tokens max_model_calls max_cost timeout }` enforced by the
 runtime as a real resource constraint.

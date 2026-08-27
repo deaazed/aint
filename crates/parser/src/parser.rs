@@ -108,6 +108,7 @@ impl Parser {
             TokenKind::Test => self.parse_test_statement(),
             TokenKind::Mock => self.parse_mock_statement(),
             TokenKind::Assert => self.parse_assert_statement(),
+            TokenKind::Budget => self.parse_budget_statement(),
             _ => self.parse_expr_statement(),
         }
     }
@@ -152,6 +153,84 @@ impl Parser {
         let condition = self.parse_expr()?;
         let span = Span::new(assert_token.span.start, condition.span.end);
         Ok(Stmt::new(StmtKind::Assert { condition }, span))
+    }
+
+    /// Parses `budget { field = literal ... }` — a fixed, known set of
+    /// fields (not general statements), each an integer or float
+    /// literal, in any order, each optional. See
+    /// `docs/milestones/17-ai-resource-management/SPEC.md`.
+    fn parse_budget_statement(&mut self) -> Result<Stmt, ParseError> {
+        let budget_token = self.expect(TokenKind::Budget, "`budget`")?;
+        self.expect(TokenKind::LeftBrace, "`{`")?;
+
+        let mut max_tokens = None;
+        let mut max_model_calls = None;
+        let mut max_cost = None;
+        let mut timeout_ms = None;
+
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            let (field, field_span) = self.expect_identifier()?;
+            self.expect(TokenKind::Equal, "`=`")?;
+            match field.as_str() {
+                "max_tokens" => max_tokens = Some(self.expect_integer_literal()?),
+                "max_model_calls" => max_model_calls = Some(self.expect_integer_literal()?),
+                "max_cost" => max_cost = Some(self.expect_number_literal()?),
+                "timeout_ms" => timeout_ms = Some(self.expect_integer_literal()?),
+                _ => {
+                    return Err(ParseError::Unexpected {
+                        expected:
+                            "a budget field (max_tokens, max_model_calls, max_cost, timeout_ms)"
+                                .to_string(),
+                        found: Token::new(TokenKind::Identifier(field), field_span),
+                    });
+                }
+            }
+        }
+
+        let close = self.expect(TokenKind::RightBrace, "`}`")?;
+        let span = Span::new(budget_token.span.start, close.span.end);
+        Ok(Stmt::new(
+            StmtKind::Budget {
+                max_tokens,
+                max_model_calls,
+                max_cost,
+                timeout_ms,
+            },
+            span,
+        ))
+    }
+
+    fn expect_integer_literal(&mut self) -> Result<i64, ParseError> {
+        match self.current().kind.clone() {
+            TokenKind::Integer(n) => {
+                self.advance();
+                Ok(n)
+            }
+            _ => Err(ParseError::Unexpected {
+                expected: "an integer".to_string(),
+                found: self.current().clone(),
+            }),
+        }
+    }
+
+    /// An integer or float literal, either way returned as `f64` — for
+    /// `max_cost`, where writing `max_cost = 0` should work without
+    /// forcing `0.0`.
+    fn expect_number_literal(&mut self) -> Result<f64, ParseError> {
+        match self.current().kind.clone() {
+            TokenKind::Integer(n) => {
+                self.advance();
+                Ok(n as f64)
+            }
+            TokenKind::Float(n) => {
+                self.advance();
+                Ok(n)
+            }
+            _ => Err(ParseError::Unexpected {
+                expected: "a number".to_string(),
+                found: self.current().clone(),
+            }),
+        }
     }
 
     fn parse_let_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -1156,6 +1235,66 @@ mod tests {
             StmtKind::Test { body, .. } => assert_eq!(body.statements.len(), 2),
             other => panic!("expected Test, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn parses_budget_statement_with_all_fields() {
+        let stmt = parse_one_stmt(
+            "budget {\n\
+                 max_tokens = 5000\n\
+                 max_model_calls = 3\n\
+                 max_cost = 0.02\n\
+                 timeout_ms = 10000\n\
+             }",
+        );
+        match stmt.kind {
+            StmtKind::Budget {
+                max_tokens,
+                max_model_calls,
+                max_cost,
+                timeout_ms,
+            } => {
+                assert_eq!(max_tokens, Some(5000));
+                assert_eq!(max_model_calls, Some(3));
+                assert_eq!(max_cost, Some(0.02));
+                assert_eq!(timeout_ms, Some(10000));
+            }
+            other => panic!("expected Budget, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_budget_statement_with_some_fields_omitted() {
+        let stmt = parse_one_stmt("budget { max_model_calls = 3 }");
+        match stmt.kind {
+            StmtKind::Budget {
+                max_tokens,
+                max_model_calls,
+                max_cost,
+                timeout_ms,
+            } => {
+                assert_eq!(max_tokens, None);
+                assert_eq!(max_model_calls, Some(3));
+                assert_eq!(max_cost, None);
+                assert_eq!(timeout_ms, None);
+            }
+            other => panic!("expected Budget, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn max_cost_accepts_a_bare_integer() {
+        let stmt = parse_one_stmt("budget { max_cost = 1 }");
+        match stmt.kind {
+            StmtKind::Budget { max_cost, .. } => assert_eq!(max_cost, Some(1.0)),
+            other => panic!("expected Budget, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn errors_on_unknown_budget_field() {
+        let err = parse_source("budget { max_bananas = 1 }").unwrap_err();
+        assert!(matches!(err, ParseError::Unexpected { .. }));
     }
 
     #[test]

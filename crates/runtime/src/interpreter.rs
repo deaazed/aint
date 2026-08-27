@@ -26,6 +26,20 @@ enum Flow {
     Return(Value),
 }
 
+/// A program's resource ceiling, from at most one `budget` block. Every
+/// field is optional — `None` means unlimited on that axis. See
+/// `docs/milestones/17-ai-resource-management/SPEC.md` for which of
+/// these are honestly enforceable today (`max_model_calls`,
+/// `timeout_ms`) versus tracked-but-currently-vacuous
+/// (`max_tokens`/`max_cost`, since every call reports zero tokens).
+#[derive(Debug, Clone, Copy, Default)]
+struct Budget {
+    max_tokens: Option<i64>,
+    max_model_calls: Option<i64>,
+    max_cost: Option<f64>,
+    timeout_ms: Option<i64>,
+}
+
 /// Tree-walk interpreter over the AST from `aint-ast`.
 ///
 /// Generic over the output writer so tests can capture what `print`
@@ -70,6 +84,14 @@ pub struct Interpreter<W: Write = io::Stdout, M: Model = MockModel> {
     traces: RefCell<Vec<TraceRecord>>,
     next_inference_id: Cell<u64>,
     next_tool_call_id: Cell<u64>,
+    /// Set once, when a `budget` statement executes. `None` (the
+    /// default) means no enforcement at all — opt-in, the same shape
+    /// as `effects` (milestone 13). See
+    /// `docs/milestones/17-ai-resource-management/SPEC.md`.
+    budget: Cell<Option<Budget>>,
+    total_model_calls: Cell<i64>,
+    total_tokens: Cell<i64>,
+    total_cost: Cell<f64>,
 }
 
 impl Interpreter<io::Stdout, MockModel> {
@@ -110,6 +132,10 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             traces: RefCell::new(Vec::new()),
             next_inference_id: Cell::new(1),
             next_tool_call_id: Cell::new(1),
+            budget: Cell::new(None),
+            total_model_calls: Cell::new(0),
+            total_tokens: Cell::new(0),
+            total_cost: Cell::new(0.0),
         }
     }
 
@@ -274,6 +300,23 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                         span: condition.span,
                     })
                 }
+            }
+            StmtKind::Budget {
+                max_tokens,
+                max_model_calls,
+                max_cost,
+                timeout_ms,
+            } => {
+                // The type checker already rejected a second `budget`
+                // block, so this always overwrites `None` with the
+                // program's one declaration.
+                self.budget.set(Some(Budget {
+                    max_tokens: *max_tokens,
+                    max_model_calls: *max_model_calls,
+                    max_cost: *max_cost,
+                    timeout_ms: *timeout_ms,
+                }));
+                Ok(Flow::Normal)
             }
             StmtKind::Return(value) => {
                 let v = self.eval_expr(value, env).await?;
@@ -539,19 +582,52 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         }
     }
 
-    /// Actually runs the deferred computation behind a
-    /// `Value::Inference` — sends it to this interpreter's `Model`, and
+    /// Sends a `Value::Inference` to this interpreter's `Model`, and
     /// keeps going as long as the model keeps asking for tool calls
     /// instead of answering. The only place `self.model` is ever
-    /// touched. See `docs/milestones/12-ai-tool-calling/SPEC.md` — no
-    /// cap on iterations here by design; see SPEC.md's reasoning.
+    /// touched. See `docs/milestones/12-ai-tool-calling/SPEC.md`.
+    ///
+    /// Wraps `eval_inference_loop` in `tokio::time::timeout` when a
+    /// `budget`'s `timeout_ms` is set — the actual loop, and the
+    /// `max_model_calls`/`max_tokens`/`max_cost` checks, live there.
+    /// See `docs/milestones/17-ai-resource-management/SPEC.md`.
     async fn eval_inference(
+        &self,
+        pending: &PendingInference,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        let timeout_ms = self.budget.get().and_then(|budget| budget.timeout_ms);
+        match timeout_ms {
+            Some(timeout_ms) => {
+                match tokio::time::timeout(
+                    Duration::from_millis(timeout_ms.max(0) as u64),
+                    self.eval_inference_loop(pending, span),
+                )
+                .await
+                {
+                    Ok(result) => result,
+                    Err(_) => Err(RuntimeError::BudgetExceeded {
+                        message: format!(
+                            "`{}` exceeded the budget's timeout_ms ({timeout_ms})",
+                            pending.function
+                        ),
+                        span,
+                    }),
+                }
+            }
+            None => self.eval_inference_loop(pending, span).await,
+        }
+    }
+
+    async fn eval_inference_loop(
         &self,
         pending: &PendingInference,
         span: Span,
     ) -> Result<Value, RuntimeError> {
         let mut history: Vec<ToolExchange> = Vec::new();
         loop {
+            self.check_model_call_budget(&pending.function, span)?;
+
             let start = Instant::now();
             let result = self
                 .model
@@ -565,6 +641,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 })
                 .await;
             let latency = start.elapsed();
+            let tokens = TokenUsage::default();
 
             let id = self.next_inference_id.get();
             self.next_inference_id.set(id + 1);
@@ -580,10 +657,11 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 id,
                 function: pending.function.clone(),
                 model: "mock".to_string(),
-                tokens: TokenUsage::default(),
+                tokens,
                 latency,
                 outcome: trace_outcome,
             });
+            self.record_model_call(tokens, &pending.function, span)?;
 
             match result? {
                 InferenceOutcome::Answer(value) => {
@@ -596,6 +674,66 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 }
             }
         }
+    }
+
+    /// Rejects a model call the budget's `max_model_calls` wouldn't
+    /// allow, *before* it happens — the direct, honest payoff of
+    /// milestone 12's documented gap ("no cap ... by design ...
+    /// milestone 17 is explicitly where budget belongs").
+    fn check_model_call_budget(&self, function: &str, span: Span) -> Result<(), RuntimeError> {
+        if let Some(max_model_calls) = self.budget.get().and_then(|b| b.max_model_calls) {
+            if self.total_model_calls.get() >= max_model_calls {
+                return Err(RuntimeError::BudgetExceeded {
+                    message: format!(
+                        "calling `{function}` would exceed the budget's max_model_calls ({max_model_calls})"
+                    ),
+                    span,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Records a completed model call against the running totals, and
+    /// checks `max_tokens`/`max_cost`. Real, tested comparison logic —
+    /// but since every call reports `TokenUsage::default()` today (see
+    /// `docs/milestones/14-ai-execution-tracing/SPEC.md`), and nothing
+    /// computes a real cost anywhere in this codebase yet, neither
+    /// check can actually fire through a live call path today. Stated
+    /// in `docs/milestones/17-ai-resource-management/SPEC.md`, not
+    /// hidden.
+    fn record_model_call(
+        &self,
+        tokens: TokenUsage,
+        function: &str,
+        span: Span,
+    ) -> Result<(), RuntimeError> {
+        self.total_model_calls.set(self.total_model_calls.get() + 1);
+        self.total_tokens
+            .set(self.total_tokens.get() + tokens.prompt as i64 + tokens.completion as i64);
+
+        let Some(budget) = self.budget.get() else {
+            return Ok(());
+        };
+        if let Some(max_tokens) = budget.max_tokens {
+            if self.total_tokens.get() > max_tokens {
+                return Err(RuntimeError::BudgetExceeded {
+                    message: format!(
+                        "`{function}` exceeded the budget's max_tokens ({max_tokens})"
+                    ),
+                    span,
+                });
+            }
+        }
+        if let Some(max_cost) = budget.max_cost {
+            if self.total_cost.get() > max_cost {
+                return Err(RuntimeError::BudgetExceeded {
+                    message: format!("`{function}` exceeded the budget's max_cost ({max_cost})"),
+                    span,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// The signature of every declared `tool`, as a `Model` sees it —
@@ -975,6 +1113,8 @@ fn type_mismatch(op: &str, left: &Value, right: &Value, span: Span) -> RuntimeEr
 
 #[cfg(test)]
 mod tests {
+    use aint_ast::Position;
+
     use super::*;
 
     /// Bridges the now-async `Interpreter::run` into these otherwise
@@ -2261,6 +2401,155 @@ mod tests {
                 }
                 other => panic!("expected an Inference trace, got {other:?}"),
             }
+        });
+    }
+
+    // --- AI resource management (milestone 17) ------------------------
+
+    /// A deliberately slow `Model` — nothing else in this test module
+    /// takes real time, so a genuine `tokio::time::sleep` is the only
+    /// way to prove `timeout_ms` fires against real elapsed time rather
+    /// than some proxy for it.
+    struct SlowModel {
+        delay_ms: u64,
+    }
+
+    impl Model for SlowModel {
+        async fn infer(
+            &self,
+            _request: InferenceRequest,
+        ) -> Result<InferenceOutcome, RuntimeError> {
+            tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            Ok(InferenceOutcome::Answer(Value::Bool(true)))
+        }
+    }
+
+    #[test]
+    fn timeout_ms_fires_against_a_genuinely_slow_model() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "budget { timeout_ms = 20 }\n\
+                 infer is_positive(text: String) -> Bool\n\
+                 await is_positive(\"x\")",
+            )
+            .expect("should parse");
+            let interpreter =
+                Interpreter::with_output_and_model(Vec::new(), SlowModel { delay_ms: 300 });
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::BudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn max_model_calls_stops_a_tool_calling_conversation_before_it_answers() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "budget { max_model_calls = 2 }\n\
+                 tool database_get_name(id: String) -> String\n\
+                 infer greet_customer(id: String) -> String\n\
+                 await greet_customer(\"42\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().script(
+                "greet_customer",
+                vec![
+                    crate::model::InferenceOutcome::CallTool {
+                        tool: "database_get_name".to_string(),
+                        args: vec![Value::String("42".to_string())],
+                    },
+                    crate::model::InferenceOutcome::CallTool {
+                        tool: "database_get_name".to_string(),
+                        args: vec![Value::String("42".to_string())],
+                    },
+                    crate::model::InferenceOutcome::Answer(Value::String("done".to_string())),
+                ],
+            );
+            let tools = crate::tool::MockTool::new()
+                .mock("database_get_name", Value::String("Ada".to_string()));
+            let interpreter = Interpreter::with_output_model_and_tools(Vec::new(), model, tools);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::BudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn a_budget_covering_only_other_fields_does_not_restrict_model_calls() {
+        assert_eq!(
+            run_capturing_with_model(
+                "budget { max_tokens = 1000000 }\n\
+                 infer is_positive(text: String) -> Bool\n\
+                 print(await is_positive(\"x\"))",
+                || crate::model::MockModel::new().mock("is_positive", Value::Bool(true)),
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn programs_without_a_budget_block_are_completely_unaffected() {
+        // No budget block anywhere - every pre-17 test in this file
+        // already proves this, but it's worth one direct case too.
+        assert_eq!(
+            run_capturing_with_model(
+                "infer is_positive(text: String) -> Bool\n\
+                 print(await is_positive(\"x\"))",
+                || crate::model::MockModel::new().mock("is_positive", Value::Bool(true)),
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn record_model_call_checks_max_tokens_and_max_cost_directly() {
+        // Real, tested comparison logic - but every call reports
+        // `TokenUsage::default()` today (see
+        // docs/milestones/14-ai-execution-tracing/SPEC.md), and
+        // nothing computes a real cost anywhere in this codebase yet,
+        // so neither check can actually fire through a live call path
+        // yet. This pokes the accumulator fields directly (both are
+        // `pub(crate)`-visible from this same-file test module) to
+        // prove the check itself is correct, honestly documented as
+        // not reachable end to end today - see
+        // docs/milestones/17-ai-resource-management/SPEC.md.
+        run_on_big_stack(move || {
+            let interpreter = Interpreter::with_output(Vec::new());
+            let span = Span::new(Position::new(1, 1), Position::new(1, 1));
+
+            interpreter.budget.set(Some(Budget {
+                max_tokens: Some(10),
+                max_model_calls: None,
+                max_cost: None,
+                timeout_ms: None,
+            }));
+            interpreter.total_tokens.set(20);
+            let err = interpreter
+                .record_model_call(TokenUsage::default(), "f", span)
+                .expect_err("should exceed max_tokens");
+            assert!(matches!(err, RuntimeError::BudgetExceeded { .. }));
+
+            interpreter.budget.set(Some(Budget {
+                max_tokens: None,
+                max_model_calls: None,
+                max_cost: Some(0.01),
+                timeout_ms: None,
+            }));
+            interpreter.total_cost.set(0.02);
+            let err = interpreter
+                .record_model_call(TokenUsage::default(), "f", span)
+                .expect_err("should exceed max_cost");
+            assert!(matches!(err, RuntimeError::BudgetExceeded { .. }));
         });
     }
 }
