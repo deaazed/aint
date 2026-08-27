@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 
-use aint_ast::Span;
+use aint_ast::{Span, Type};
 
 use crate::error::RuntimeError;
 use crate::value::Value;
@@ -23,6 +23,27 @@ pub struct ToolRequest {
     pub tool: String,
     pub args: Vec<Value>,
     pub span: Span,
+}
+
+/// A declared tool's shape, as a `Model` sees it (milestone 12): what
+/// it's called, and its typed signature — enough for a model (real or
+/// mock) to decide whether, and how, to call it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolSignature {
+    pub name: String,
+    pub params: Vec<Type>,
+    pub return_type: Type,
+}
+
+/// One completed tool call within an inference's tool-calling
+/// conversation: what was called, with what, and what came back. Fed
+/// to the model on the *next* call so it has the result to work from.
+/// See `docs/milestones/12-ai-tool-calling/SPEC.md`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolExchange {
+    pub tool: String,
+    pub args: Vec<Value>,
+    pub result: Value,
 }
 
 /// The only way a `tool` call produces a value before milestone 16.

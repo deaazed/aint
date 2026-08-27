@@ -107,12 +107,14 @@ pub struct PendingInference {
     pub return_type: Type,
 }
 
-/// A `tool`-declared function: name, parameter names, and declared
-/// return type — the runtime counterpart of [`InferenceFn`].
-#[derive(Debug, PartialEq)]
+/// A `tool`-declared function: name, parameter *types* (not names —
+/// there's no body to bind them into, and milestone 12 needs the types
+/// to validate a model-requested call's arguments at runtime), and
+/// declared return type. The runtime counterpart of [`InferenceFn`].
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolFn {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<Type>,
     pub return_type: Type,
 }
 

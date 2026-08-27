@@ -17,8 +17,8 @@ mod value;
 
 pub use error::RuntimeError;
 pub use interpreter::Interpreter;
-pub use model::{InferenceRequest, MockModel, Model};
-pub use tool::{MockTool, ToolRequest};
+pub use model::{InferenceOutcome, InferenceRequest, MockModel, Model};
+pub use tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
 pub use value::{
     Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, ToolFn, Value,
 };

@@ -9,9 +9,9 @@ use async_recursion::async_recursion;
 
 use crate::environment::Environment;
 use crate::error::RuntimeError;
-use crate::model::{InferenceRequest, MockModel, Model};
+use crate::model::{InferenceOutcome, InferenceRequest, MockModel, Model};
 use crate::stdlib;
-use crate::tool::{MockTool, ToolRequest};
+use crate::tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
 use crate::value::{
     Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, Task, ToolFn, Value,
 };
@@ -58,6 +58,12 @@ pub struct Interpreter<W: Write = io::Stdout, M: Model = MockModel> {
     /// model's response against the schema an `infer` call declared.
     /// See `docs/milestones/09-typed-structured-inference/SPEC.md`.
     enums: RefCell<HashMap<String, Vec<String>>>,
+    /// Every declared `tool`, by name, to its signature — populated as
+    /// `StmtKind::Tool` statements execute. Lets a model-requested tool
+    /// call be validated and looked up by an arbitrary runtime string,
+    /// same shape as `enums`. See
+    /// `docs/milestones/12-ai-tool-calling/SPEC.md`.
+    tools_registry: RefCell<HashMap<String, Rc<ToolFn>>>,
 }
 
 impl Interpreter<io::Stdout, MockModel> {
@@ -94,6 +100,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             model,
             tools,
             enums: RefCell::new(HashMap::new()),
+            tools_registry: RefCell::new(HashMap::new()),
         }
     }
 
@@ -185,13 +192,22 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 params,
                 return_type,
             } => {
-                // Same reasoning as `StmtKind::Infer` just above.
-                let tool_fn = Value::ToolFn(Rc::new(ToolFn {
+                // Same reasoning as `StmtKind::Infer` just above, plus
+                // `self.tools_registry` (milestone 12): a model-driven
+                // tool call is a runtime string, not statically-checked
+                // AINT source, so the interpreter needs to look up a
+                // tool's signature by name independent of any lexical
+                // environment.
+                let tool_fn = Rc::new(ToolFn {
                     name: name.clone(),
-                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    params: params.iter().map(|p| p.ty.clone()).collect(),
                     return_type: return_type.clone(),
-                }));
-                env.borrow_mut().define(name.clone(), tool_fn);
+                });
+                self.tools_registry
+                    .borrow_mut()
+                    .insert(name.clone(), Rc::clone(&tool_fn));
+                env.borrow_mut()
+                    .define(name.clone(), Value::ToolFn(tool_fn));
                 Ok(Flow::Normal)
             }
             StmtKind::Enum { name, variants } => {
@@ -472,24 +488,105 @@ impl<W: Write, M: Model> Interpreter<W, M> {
     }
 
     /// Actually runs the deferred computation behind a
-    /// `Value::Inference` — sends it to this interpreter's `Model`. The
-    /// only place `self.model` is ever touched.
+    /// `Value::Inference` — sends it to this interpreter's `Model`, and
+    /// keeps going as long as the model keeps asking for tool calls
+    /// instead of answering. The only place `self.model` is ever
+    /// touched. See `docs/milestones/12-ai-tool-calling/SPEC.md` — no
+    /// cap on iterations here by design; see SPEC.md's reasoning.
     async fn eval_inference(
         &self,
         pending: &PendingInference,
         span: Span,
     ) -> Result<Value, RuntimeError> {
-        let value = self
-            .model
-            .infer(InferenceRequest {
-                function: pending.function.clone(),
-                args: pending.args.clone(),
-                return_type: pending.return_type.clone(),
+        let mut history: Vec<ToolExchange> = Vec::new();
+        loop {
+            let outcome = self
+                .model
+                .infer(InferenceRequest {
+                    function: pending.function.clone(),
+                    args: pending.args.clone(),
+                    return_type: pending.return_type.clone(),
+                    available_tools: self.available_tools(),
+                    history: history.clone(),
+                    span,
+                })
+                .await?;
+
+            match outcome {
+                InferenceOutcome::Answer(value) => {
+                    self.validate_inference_result(&value, &pending.return_type, span)?;
+                    return Ok(value);
+                }
+                InferenceOutcome::CallTool { tool, args } => {
+                    let result = self.call_requested_tool(&tool, args.clone(), span).await?;
+                    history.push(ToolExchange { tool, args, result });
+                }
+            }
+        }
+    }
+
+    /// The signature of every declared `tool`, as a `Model` sees it —
+    /// what `InferenceRequest::available_tools` is built from.
+    fn available_tools(&self) -> Vec<ToolSignature> {
+        self.tools_registry
+            .borrow()
+            .values()
+            .map(|tool_fn| ToolSignature {
+                name: tool_fn.name.clone(),
+                params: tool_fn.params.clone(),
+                return_type: tool_fn.return_type.clone(),
+            })
+            .collect()
+    }
+
+    /// Runs a tool call *requested by a model*, not written in AINT
+    /// source — the "runtime validates arguments before execution"
+    /// guarantee milestone 11 deferred to here, because this is the
+    /// first place arguments can arrive without the static type
+    /// checker ever having seen them. Looks the tool up by name
+    /// (`RuntimeError::ToolError` if it isn't declared — "a model
+    /// cannot invoke a tool that doesn't exist," now in its dynamic
+    /// form), checks argument count and type against its declared
+    /// signature, executes it, and validates the result exactly like
+    /// `eval_tool_call` does for a directly-called tool.
+    async fn call_requested_tool(
+        &self,
+        tool: &str,
+        args: Vec<Value>,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        let tool_fn = self
+            .tools_registry
+            .borrow()
+            .get(tool)
+            .cloned()
+            .ok_or_else(|| RuntimeError::ToolError {
+                message: format!("no tool named `{tool}` is declared"),
+                span,
+            })?;
+
+        if tool_fn.params.len() != args.len() {
+            return Err(RuntimeError::ArityMismatch {
+                name: tool.to_string(),
+                expected: tool_fn.params.len(),
+                found: args.len(),
+                span,
+            });
+        }
+        for (arg, expected_ty) in args.iter().zip(&tool_fn.params) {
+            validate_value_matches_type(arg, expected_ty, span)?;
+        }
+
+        let result = self
+            .tools
+            .call(ToolRequest {
+                tool: tool.to_string(),
+                args,
                 span,
             })
             .await?;
-        self.validate_inference_result(&value, &pending.return_type, span)?;
-        Ok(value)
+        self.validate_inference_result(&result, &tool_fn.return_type, span)?;
+        Ok(result)
     }
 
     /// Actually runs the deferred computation behind a
@@ -682,6 +779,41 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             }
             _ => unreachable!("only async natives should ever reach eval_await"),
         }
+    }
+}
+
+/// Checks a runtime `Value` against a declared `Type` — the first
+/// place AINT needs this check at all, since every prior call site was
+/// AINT source the static type checker already validated. A
+/// model-requested tool call's arguments are a runtime string and a
+/// `Vec<Value>` the checker never saw. See
+/// `docs/milestones/12-ai-tool-calling/SPEC.md`.
+fn validate_value_matches_type(value: &Value, ty: &Type, span: Span) -> Result<(), RuntimeError> {
+    let ok = match (value, ty) {
+        (Value::Int(_), Type::Int) => true,
+        (Value::Float(_), Type::Float) => true,
+        (Value::Bool(_), Type::Bool) => true,
+        (Value::String(_), Type::String) => true,
+        (Value::Unit, Type::Unit) => true,
+        (Value::Enum(name, _), Type::Enum(expected)) => name == expected,
+        (Value::List(items), Type::List(inner)) => {
+            return items
+                .iter()
+                .try_for_each(|item| validate_value_matches_type(item, inner, span));
+        }
+        (Value::Option(None), Type::Option(_)) => true,
+        (Value::Option(Some(inner_value)), Type::Option(inner_ty)) => {
+            return validate_value_matches_type(inner_value, inner_ty, span);
+        }
+        _ => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(RuntimeError::SchemaViolation {
+            message: format!("expected {ty}, found a {}", value.type_name()),
+            span,
+        })
     }
 }
 
@@ -1631,5 +1763,185 @@ mod tests {
             ),
             "true\n"
         );
+    }
+
+    // --- AI tool calling (milestone 12) -------------------------------
+
+    fn run_capturing_with_model_and_tools(
+        src: &'static str,
+        build_model: impl FnOnce() -> crate::model::MockModel + Send + 'static,
+        build_tools: impl FnOnce() -> crate::tool::MockTool + Send + 'static,
+    ) -> String {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(src).expect("should parse");
+            let interpreter =
+                Interpreter::with_output_model_and_tools(Vec::new(), build_model(), build_tools());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            String::from_utf8(interpreter.into_output()).expect("output should be valid utf8")
+        })
+    }
+
+    #[test]
+    fn model_requests_a_tool_call_then_answers() {
+        // The actual payoff of this milestone: the model doesn't
+        // answer directly - it asks for a tool call, gets the result,
+        // and *then* answers. Two round trips to the model, one to the
+        // tool, all driven entirely by `eval_inference`'s loop.
+        assert_eq!(
+            run_capturing_with_model_and_tools(
+                "tool database_get_email(id: String) -> String\n\
+                 infer greet_customer(id: String) -> String\n\
+                 print(await greet_customer(\"42\"))",
+                || {
+                    crate::model::MockModel::new().script(
+                        "greet_customer",
+                        vec![
+                            crate::model::InferenceOutcome::CallTool {
+                                tool: "database_get_email".to_string(),
+                                args: vec![Value::String("42".to_string())],
+                            },
+                            crate::model::InferenceOutcome::Answer(Value::String(
+                                "Hello, a@b.com".to_string(),
+                            )),
+                        ],
+                    )
+                },
+                || {
+                    crate::tool::MockTool::new()
+                        .mock("database_get_email", Value::String("a@b.com".to_string()))
+                },
+            ),
+            "Hello, a@b.com\n"
+        );
+    }
+
+    #[test]
+    fn model_requests_two_tool_calls_in_sequence_before_answering() {
+        assert_eq!(
+            run_capturing_with_model_and_tools(
+                "tool database_get_email(id: String) -> String\n\
+                 tool database_get_name(id: String) -> String\n\
+                 infer greet_customer(id: String) -> String\n\
+                 print(await greet_customer(\"42\"))",
+                || {
+                    crate::model::MockModel::new().script(
+                        "greet_customer",
+                        vec![
+                            crate::model::InferenceOutcome::CallTool {
+                                tool: "database_get_name".to_string(),
+                                args: vec![Value::String("42".to_string())],
+                            },
+                            crate::model::InferenceOutcome::CallTool {
+                                tool: "database_get_email".to_string(),
+                                args: vec![Value::String("42".to_string())],
+                            },
+                            crate::model::InferenceOutcome::Answer(Value::String(
+                                "Hello Ada, a@b.com".to_string(),
+                            )),
+                        ],
+                    )
+                },
+                || {
+                    crate::tool::MockTool::new()
+                        .mock("database_get_name", Value::String("Ada".to_string()))
+                        .mock("database_get_email", Value::String("a@b.com".to_string()))
+                },
+            ),
+            "Hello Ada, a@b.com\n"
+        );
+    }
+
+    #[test]
+    fn model_requesting_an_undeclared_tool_is_a_clear_tool_error() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "infer greet_customer(id: String) -> String\n\
+                 await greet_customer(\"42\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().script(
+                "greet_customer",
+                vec![crate::model::InferenceOutcome::CallTool {
+                    tool: "nonexistent_tool".to_string(),
+                    args: vec![],
+                }],
+            );
+            let interpreter =
+                Interpreter::with_output_model_and_tools(Vec::new(), model, MockTool::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::ToolError { .. }));
+    }
+
+    #[test]
+    fn model_requesting_a_tool_call_with_wrong_argument_type_is_rejected() {
+        // The runtime, not the type checker, catches this - the model
+        // supplied the argument, so nothing statically checked it.
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_email(id: String) -> String\n\
+                 infer greet_customer(id: String) -> String\n\
+                 await greet_customer(\"42\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().script(
+                "greet_customer",
+                vec![crate::model::InferenceOutcome::CallTool {
+                    tool: "database_get_email".to_string(),
+                    args: vec![Value::Int(42)],
+                }],
+            );
+            let interpreter =
+                Interpreter::with_output_model_and_tools(Vec::new(), model, MockTool::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    #[test]
+    fn model_requesting_a_tool_call_with_wrong_argument_count_is_rejected() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_email(id: String) -> String\n\
+                 infer greet_customer(id: String) -> String\n\
+                 await greet_customer(\"42\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().script(
+                "greet_customer",
+                vec![crate::model::InferenceOutcome::CallTool {
+                    tool: "database_get_email".to_string(),
+                    args: vec![],
+                }],
+            );
+            let interpreter =
+                Interpreter::with_output_model_and_tools(Vec::new(), model, MockTool::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::ArityMismatch { .. }));
     }
 }

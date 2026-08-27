@@ -88,7 +88,7 @@ schema, output schema, effect, permissions, timeout. Runtime validates
 arguments before execution; a model cannot invoke a tool that doesn't
 exist.
 
-## 12 — AI tool calling
+## 12 — AI tool calling — done
 
 The model can request a tool call mid-inference; the runtime validates,
 executes, and feeds the result back. This is the actual foundation for
