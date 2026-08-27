@@ -64,6 +64,15 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    /// A call from inside a function with a declared `effects` clause,
+    /// to a callee whose own effects aren't provably a subset of the
+    /// caller's — including a callee with no declared effects at all
+    /// (untracked isn't the same as harmless). See
+    /// `docs/milestones/13-effects/SPEC.md`.
+    EffectMismatch {
+        name: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -81,7 +90,8 @@ impl TypeError {
             | TypeError::MissingReturn { span, .. }
             | TypeError::UnknownModule { span, .. }
             | TypeError::UnknownType { span, .. }
-            | TypeError::EmptyEnum { span, .. } => *span,
+            | TypeError::EmptyEnum { span, .. }
+            | TypeError::EffectMismatch { span, .. } => *span,
         }
     }
 }
@@ -151,6 +161,11 @@ impl fmt::Display for TypeError {
             TypeError::EmptyEnum { name, span } => {
                 write!(f, "{}: `enum {name}` has no variants", span.start)
             }
+            TypeError::EffectMismatch { name, span } => write!(
+                f,
+                "{}: `{name}` cannot be called here; its effects aren't declared compatible with the caller's `effects` clause",
+                span.start
+            ),
         }
     }
 }

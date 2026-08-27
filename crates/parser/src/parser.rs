@@ -1,5 +1,6 @@
 use aint_ast::{
-    BinaryOp, Block, Expr, ExprKind, Param, Position, Program, Span, Stmt, StmtKind, Type, UnaryOp,
+    BinaryOp, Block, Effect, Expr, ExprKind, Param, Position, Program, Span, Stmt, StmtKind, Type,
+    UnaryOp,
 };
 use aint_lexer::{tokenize, Token, TokenKind};
 
@@ -148,6 +149,7 @@ impl Parser {
         self.expect(TokenKind::RightParen, "`)`")?;
         self.expect(TokenKind::Arrow, "`->`")?;
         let (return_type, _) = self.parse_type()?;
+        let effects = self.parse_effects_clause()?;
         let body = self.parse_block()?;
         let span = Span::new(start, body.span.end);
         Ok(Stmt::new(
@@ -157,9 +159,66 @@ impl Parser {
                 return_type,
                 body,
                 is_async,
+                effects,
             },
             span,
         ))
+    }
+
+    /// Parses an optional `effects [ Effect, Effect, ... ]` clause —
+    /// `fn`/`async fn` only, see
+    /// `docs/milestones/13-effects/SPEC.md` for why `infer`/`tool`
+    /// don't get this syntax. Absent entirely (not `Effect` being the
+    /// current token) means untracked, not `pure` — returns `None`.
+    fn parse_effects_clause(&mut self) -> Result<Option<Vec<Effect>>, ParseError> {
+        if !self.matches(&TokenKind::Effects) {
+            return Ok(None);
+        }
+        self.expect(TokenKind::LeftBracket, "`[`")?;
+        let mut effects = Vec::new();
+        if !self.check(&TokenKind::RightBracket) {
+            loop {
+                effects.push(self.parse_effect_word()?);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightBracket, "`]`")?;
+        Ok(Some(effects))
+    }
+
+    /// One word inside an `effects [ ... ]` list. `tool` is handled
+    /// separately from the other four: it's already a keyword
+    /// (`TokenKind::Tool`, milestone 11), so it never lexes as
+    /// `TokenKind::Identifier("tool")` the way `pure`/`inference`/
+    /// `network`/`filesystem` do.
+    fn parse_effect_word(&mut self) -> Result<Effect, ParseError> {
+        let token = self.current().clone();
+        let effect = match &token.kind {
+            TokenKind::Tool => Effect::Tool,
+            TokenKind::Identifier(name) => match name.as_str() {
+                "pure" => Effect::Pure,
+                "inference" => Effect::Inference,
+                "network" => Effect::Network,
+                "filesystem" => Effect::Filesystem,
+                _ => {
+                    return Err(ParseError::Unexpected {
+                        expected: "an effect (pure, inference, tool, network, filesystem)"
+                            .to_string(),
+                        found: token,
+                    });
+                }
+            },
+            _ => {
+                return Err(ParseError::Unexpected {
+                    expected: "an effect (pure, inference, tool, network, filesystem)".to_string(),
+                    found: token,
+                });
+            }
+        };
+        self.advance();
+        Ok(effect)
     }
 
     /// Parses `infer name(params) -> Type` — deliberately no body, see
@@ -755,8 +814,10 @@ mod tests {
                 return_type,
                 body,
                 is_async,
+                effects,
             } => {
                 assert_eq!(name, "add");
+                assert!(effects.is_none());
                 assert_eq!(
                     params,
                     vec![
@@ -927,6 +988,79 @@ mod tests {
         match stmt.kind {
             StmtKind::Tool { params, .. } => assert!(params.is_empty()),
             other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fn_with_no_effects_clause_is_untracked() {
+        let stmt = parse_one_stmt("fn f() -> Int { return 1 }");
+        match stmt.kind {
+            StmtKind::Fn { effects, .. } => assert!(effects.is_none()),
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_pure_effects_clause() {
+        let stmt = parse_one_stmt("fn f() -> Int effects [pure] { return 1 }");
+        match stmt.kind {
+            StmtKind::Fn { effects, .. } => {
+                assert_eq!(effects, Some(vec![Effect::Pure]));
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_multi_effect_clause() {
+        let stmt = parse_one_stmt("fn f() -> Int effects [inference, tool] { return 1 }");
+        match stmt.kind {
+            StmtKind::Fn { effects, .. } => {
+                assert_eq!(effects, Some(vec![Effect::Inference, Effect::Tool]));
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_all_five_effect_words() {
+        let stmt = parse_one_stmt(
+            "fn f() -> Int effects [pure, inference, tool, network, filesystem] { return 1 }",
+        );
+        match stmt.kind {
+            StmtKind::Fn { effects, .. } => {
+                assert_eq!(
+                    effects,
+                    Some(vec![
+                        Effect::Pure,
+                        Effect::Inference,
+                        Effect::Tool,
+                        Effect::Network,
+                        Effect::Filesystem,
+                    ])
+                );
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn errors_on_unknown_effect_word() {
+        let err = parse_source("fn f() -> Int effects [flying] { return 1 }").unwrap_err();
+        assert!(matches!(err, ParseError::Unexpected { .. }));
+    }
+
+    #[test]
+    fn async_fn_can_have_an_effects_clause_too() {
+        let stmt = parse_one_stmt("async fn f() -> Int effects [pure] { return 1 }");
+        match stmt.kind {
+            StmtKind::Fn {
+                is_async, effects, ..
+            } => {
+                assert!(is_async);
+                assert_eq!(effects, Some(vec![Effect::Pure]));
+            }
+            other => panic!("expected Fn, got {other:?}"),
         }
     }
 

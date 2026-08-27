@@ -155,10 +155,13 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 body,
                 return_type: _,
                 is_async,
+                effects: _,
             } => {
                 // The type checker already validated this signature by
                 // the time a real `aint run` gets here; the interpreter
                 // only needs param names to bind argument values.
+                // `effects` (milestone 13) is purely a type-checking
+                // concept - erased after checking, never read here.
                 let function = Value::Function(Rc::new(Function {
                     name: name.clone(),
                     params: params.iter().map(|p| p.name.clone()).collect(),

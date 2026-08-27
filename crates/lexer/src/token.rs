@@ -24,6 +24,7 @@ pub enum TokenKind {
     Infer,
     Enum,
     Tool,
+    Effects,
 
     // Operators
     Plus,
@@ -70,6 +71,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Infer => write!(f, "`infer`"),
             TokenKind::Enum => write!(f, "`enum`"),
             TokenKind::Tool => write!(f, "`tool`"),
+            TokenKind::Effects => write!(f, "`effects`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -121,6 +123,7 @@ pub(crate) fn keyword(word: &str) -> Option<TokenKind> {
         "infer" => TokenKind::Infer,
         "enum" => TokenKind::Enum,
         "tool" => TokenKind::Tool,
+        "effects" => TokenKind::Effects,
         _ => return None,
     })
 }

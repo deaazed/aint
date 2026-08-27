@@ -1,6 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, Type, UnaryOp};
+use aint_ast::{
+    BinaryOp, Block, Effect, Expr, ExprKind, Program, Span, Stmt, StmtKind, Type, UnaryOp,
+};
 
 use crate::error::TypeError;
 use crate::stdlib;
@@ -42,6 +44,29 @@ struct FunctionSignature {
     params: Vec<Type>,
     return_type: Type,
     mode: CallMode,
+    effects: EffectInfo,
+}
+
+/// What's known about a callable's effects, for the milestone-13
+/// check in `check_call`. Three states, not two — `Exempt` (stdlib and
+/// natives, always callable) and `Untracked` (a user `fn` with no
+/// `effects` clause) are different failure behaviors, not the same
+/// thing spelled two ways. See
+/// `docs/milestones/13-effects/SPEC.md`.
+#[derive(Debug, Clone)]
+enum EffectInfo {
+    /// Stdlib/native functions — compatible with any caller,
+    /// regardless of what it declared. See SPEC.md for why retrofitting
+    /// real purity tags onto the standard library is out of scope.
+    Exempt,
+    /// A user `fn`/`async fn` with no `effects` clause. Incompatible
+    /// with *any* effect-checked caller — untracked isn't the same as
+    /// harmless.
+    Untracked,
+    /// A real, checked effect set: a user `fn` with an `effects`
+    /// clause (already validated: empty if `[pure]`), or the intrinsic
+    /// set for `infer` (`{Inference}`) / `tool` (`{Tool}`).
+    Declared(HashSet<Effect>),
 }
 
 /// What a call-expression's type is, on top of the signature's declared
@@ -72,6 +97,12 @@ pub struct TypeChecker {
     /// `fn`/`infer` already have. See
     /// `docs/milestones/09-typed-structured-inference/SPEC.md`.
     enums: HashMap<String, Vec<String>>,
+    /// The effect set of the `fn` body currently being checked, if it
+    /// declared one — `None` while checking a body with no `effects`
+    /// clause (or at the top level), meaning no effect checking
+    /// happens for calls made from here. See
+    /// `docs/milestones/13-effects/SPEC.md`.
+    current_effects: Option<HashSet<Effect>>,
 }
 
 impl Default for TypeChecker {
@@ -86,6 +117,7 @@ impl TypeChecker {
             scopes: vec![HashMap::new()],
             current_return_type: None,
             enums: HashMap::new(),
+            current_effects: None,
         }
     }
 
@@ -116,6 +148,7 @@ impl TypeChecker {
                     params,
                     return_type,
                     is_async,
+                    effects,
                     ..
                 } => {
                     let mode = if *is_async {
@@ -125,7 +158,12 @@ impl TypeChecker {
                     };
                     self.define(
                         name.clone(),
-                        Binding::Function(signature(params, return_type, mode)),
+                        Binding::Function(signature(
+                            params,
+                            return_type,
+                            mode,
+                            fn_effect_info(effects),
+                        )),
                     );
                 }
                 StmtKind::Infer {
@@ -135,7 +173,12 @@ impl TypeChecker {
                 } => {
                     self.define(
                         name.clone(),
-                        Binding::Function(signature(params, return_type, CallMode::Infer)),
+                        Binding::Function(signature(
+                            params,
+                            return_type,
+                            CallMode::Infer,
+                            EffectInfo::Declared(HashSet::from([Effect::Inference])),
+                        )),
                     );
                 }
                 StmtKind::Tool {
@@ -145,7 +188,12 @@ impl TypeChecker {
                 } => {
                     self.define(
                         name.clone(),
-                        Binding::Function(signature(params, return_type, CallMode::ToolCall)),
+                        Binding::Function(signature(
+                            params,
+                            return_type,
+                            CallMode::ToolCall,
+                            EffectInfo::Declared(HashSet::from([Effect::Tool])),
+                        )),
                     );
                 }
                 _ => {}
@@ -224,6 +272,7 @@ impl TypeChecker {
                 return_type,
                 body,
                 is_async,
+                effects,
             } => {
                 // Redundant for a hoisted top-level function (already
                 // bound above); the only place a block-nested `fn` gets
@@ -234,9 +283,18 @@ impl TypeChecker {
                 } else {
                     CallMode::Sync
                 };
+                if let Some(list) = effects {
+                    if list.contains(&Effect::Pure) && list.len() > 1 {
+                        return Err(TypeError::Mismatch {
+                            message: "`pure` cannot be combined with other effects".to_string(),
+                            span: stmt.span,
+                        });
+                    }
+                }
+                let effect_info = fn_effect_info(effects);
                 self.define(
                     name.clone(),
-                    Binding::Function(signature(params, return_type, mode)),
+                    Binding::Function(signature(params, return_type, mode, effect_info.clone())),
                 );
                 for param in params {
                     self.validate_type(&param.ty, stmt.span)?;
@@ -248,7 +306,15 @@ impl TypeChecker {
                     self.define(param.name.clone(), Binding::Variable(param.ty.clone()));
                 }
                 let previous_return_type = self.current_return_type.replace(return_type.clone());
+                let previous_effects = std::mem::replace(
+                    &mut self.current_effects,
+                    match &effect_info {
+                        EffectInfo::Declared(set) => Some(set.clone()),
+                        EffectInfo::Untracked | EffectInfo::Exempt => None,
+                    },
+                );
                 self.check_block(body)?;
+                self.current_effects = previous_effects;
                 self.current_return_type = previous_return_type;
                 self.pop_scope();
 
@@ -273,7 +339,12 @@ impl TypeChecker {
                 // missing-return analysis: there's nothing to walk.
                 self.define(
                     name.clone(),
-                    Binding::Function(signature(params, return_type, CallMode::Infer)),
+                    Binding::Function(signature(
+                        params,
+                        return_type,
+                        CallMode::Infer,
+                        EffectInfo::Declared(HashSet::from([Effect::Inference])),
+                    )),
                 );
                 for param in params {
                     self.validate_type(&param.ty, stmt.span)?;
@@ -290,7 +361,12 @@ impl TypeChecker {
                 // `docs/milestones/11-typed-tools/SPEC.md`.
                 self.define(
                     name.clone(),
-                    Binding::Function(signature(params, return_type, CallMode::ToolCall)),
+                    Binding::Function(signature(
+                        params,
+                        return_type,
+                        CallMode::ToolCall,
+                        EffectInfo::Declared(HashSet::from([Effect::Tool])),
+                    )),
                 );
                 for param in params {
                     self.validate_type(&param.ty, stmt.span)?;
@@ -396,6 +472,7 @@ impl TypeChecker {
                                     params: sig.params,
                                     return_type: sig.return_type,
                                     mode,
+                                    effects: EffectInfo::Exempt,
                                 }),
                             );
                         }
@@ -606,6 +683,20 @@ impl TypeChecker {
             }
         }
 
+        if let Some(caller_effects) = &self.current_effects {
+            let compatible = match &sig.effects {
+                EffectInfo::Exempt => true,
+                EffectInfo::Untracked => false,
+                EffectInfo::Declared(callee_effects) => callee_effects.is_subset(caller_effects),
+            };
+            if !compatible {
+                return Err(TypeError::EffectMismatch {
+                    name: name.clone(),
+                    span,
+                });
+            }
+        }
+
         match sig.mode {
             CallMode::Sync => Ok(sig.return_type),
             CallMode::Async => Ok(Type::Task(Box::new(sig.return_type))),
@@ -710,11 +801,29 @@ impl TypeChecker {
     }
 }
 
-fn signature(params: &[aint_ast::Param], return_type: &Type, mode: CallMode) -> FunctionSignature {
+fn signature(
+    params: &[aint_ast::Param],
+    return_type: &Type,
+    mode: CallMode,
+    effects: EffectInfo,
+) -> FunctionSignature {
     FunctionSignature {
         params: params.iter().map(|p| p.ty.clone()).collect(),
         return_type: return_type.clone(),
         mode,
+        effects,
+    }
+}
+
+/// Converts a `fn`'s parsed `effects` clause into `EffectInfo`.
+/// Doesn't validate `[pure]`-must-be-alone — that's `check_stmt`'s job
+/// (it needs a `Span` and only runs once per declaration, not once per
+/// hoist-then-check).
+fn fn_effect_info(effects: &Option<Vec<Effect>>) -> EffectInfo {
+    match effects {
+        None => EffectInfo::Untracked,
+        Some(list) if list.contains(&Effect::Pure) => EffectInfo::Declared(HashSet::new()),
+        Some(list) => EffectInfo::Declared(list.iter().copied().collect()),
     }
 }
 
@@ -1301,5 +1410,114 @@ mod tests {
         // SPEC.md on what's deferred to milestone 12.
         let err = check("await nonexistent_tool(\"x\")").unwrap_err();
         assert!(matches!(err, TypeError::UndefinedFunction { .. }));
+    }
+
+    // --- effects ---------------------------------------------------------
+
+    #[test]
+    fn unannotated_functions_are_unaffected_by_effect_checking() {
+        // No `effects` clause anywhere - this must behave exactly as
+        // it did before this milestone existed.
+        assert!(check(
+            "infer classify(text: String) -> Bool\n\
+             fn helper() -> Bool { return await classify(\"x\") }\n\
+             fn caller() -> Bool { return helper() }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn pure_function_can_call_another_pure_function() {
+        assert!(check(
+            "fn add(a: Int, b: Int) -> Int effects [pure] { return a + b }\n\
+             fn double(n: Int) -> Int effects [pure] { return add(n, n) }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn pure_function_calling_infer_is_rejected() {
+        let err = check(
+            "infer classify(text: String) -> Bool\n\
+             fn f() -> Bool effects [pure] { return await classify(\"x\") }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::EffectMismatch { .. }));
+    }
+
+    #[test]
+    fn pure_function_calling_tool_is_rejected() {
+        let err = check(
+            "tool database_get_email(id: String) -> String\n\
+             fn f() -> String effects [pure] { return await database_get_email(\"1\") }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::EffectMismatch { .. }));
+    }
+
+    #[test]
+    fn pure_function_calling_an_untracked_function_is_rejected() {
+        let err = check(
+            "fn untracked() -> Int { return 1 }\n\
+             fn f() -> Int effects [pure] { return untracked() }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::EffectMismatch { .. }));
+    }
+
+    #[test]
+    fn pure_function_can_call_stdlib_functions() {
+        assert!(check(
+            "import math\n\
+             fn f(x: Float) -> Float effects [pure] { return math_sqrt(x) }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn inference_effect_function_can_call_infer() {
+        assert!(check(
+            "infer classify(text: String) -> Bool\n\
+             fn f() -> Bool effects [inference] { return await classify(\"x\") }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn inference_effect_function_calling_tool_is_rejected() {
+        let err = check(
+            "tool database_get_email(id: String) -> String\n\
+             fn f() -> String effects [inference] { return await database_get_email(\"1\") }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::EffectMismatch { .. }));
+    }
+
+    #[test]
+    fn function_declaring_both_inference_and_tool_can_call_either() {
+        assert!(check(
+            "infer classify(text: String) -> Bool\n\
+             tool database_get_email(id: String) -> String\n\
+             fn f() -> Bool effects [inference, tool] {\n\
+                 let email = await database_get_email(\"1\")\n\
+                 return await classify(email)\n\
+             }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn pure_combined_with_another_effect_is_rejected() {
+        let err = check("fn f() -> Int effects [pure, tool] { return 1 }").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn async_fn_can_declare_effects_too() {
+        assert!(check(
+            "infer classify(text: String) -> Bool\n\
+             async fn f() -> Bool effects [inference] { return await classify(\"x\") }"
+        )
+        .is_ok());
     }
 }

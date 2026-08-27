@@ -30,6 +30,14 @@ pub enum StmtKind {
         return_type: Type,
         body: Block,
         is_async: bool,
+        /// An optional `effects [ ... ]` clause (milestone 13). `None`
+        /// means untracked, not "no effects" — see
+        /// `docs/milestones/13-effects/SPEC.md` for why an unannotated
+        /// function is exempt from checking rather than implicitly
+        /// `pure`. Not extended to `Infer`/`Tool`: their effect is
+        /// intrinsic and never anything else, so there's no legal
+        /// second value the clause could hold there.
+        effects: Option<Vec<Effect>>,
     },
     Return(Expr),
     Import(String),
@@ -61,6 +69,19 @@ pub enum StmtKind {
         params: Vec<Param>,
         return_type: Type,
     },
+}
+
+/// One of the five effect words `ROADMAP.md` names. See
+/// `docs/milestones/13-effects/SPEC.md` for what's actually checked
+/// (`Inference`/`Tool`) versus accepted-but-vacuous
+/// (`Network`/`Filesystem`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Effect {
+    Pure,
+    Inference,
+    Tool,
+    Network,
+    Filesystem,
 }
 
 #[derive(Debug, Clone, PartialEq)]

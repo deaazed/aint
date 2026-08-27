@@ -94,7 +94,7 @@ The model can request a tool call mid-inference; the runtime validates,
 executes, and feeds the result back. This is the actual foundation for
 agents — not a separate `agent` primitive.
 
-## 13 — Effects
+## 13 — Effects — done
 
 `pure`, `inference`, `tool`, `network`, `filesystem` as declared function
 effects, checked by the compiler.
