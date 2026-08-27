@@ -12,6 +12,7 @@ dependencies = [
  "aint-parser",
  "aint-runtime",
  "aint-typechecker",
+ "aint-vm",
  "clap",
  "tokio",
 ]
@@ -64,6 +65,17 @@ version = "0.1.0"
 dependencies = [
  "aint-ast",
  "aint-parser",
+]
+
+[[package]]
+name = "aint-vm"
+version = "0.1.0"
+dependencies = [
+ "aint-ast",
+ "aint-ir",
+ "aint-parser",
+ "aint-runtime",
+ "aint-typechecker",
 ]
 
 [[package]]

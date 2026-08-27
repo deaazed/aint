@@ -20,7 +20,13 @@ use crate::value::{NativeFunction, Value};
 
 /// The native functions `import <module>` should bind, and under what
 /// names. `None` for an unrecognized module name.
-pub(crate) fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction)>> {
+///
+/// `pub`, not `pub(crate)`, since milestone 22's bytecode VM
+/// (`aint-vm`) needs the exact same name-to-native table `Interpreter`
+/// uses for `StmtKind::Import` — resolving every native call at
+/// compile time instead of re-deriving this table is the whole point,
+/// so it has to be the same table, not a second one drifting from it.
+pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction)>> {
     match module {
         "math" => Some(vec![
             ("math_sqrt", NativeFunction::MathSqrt),
@@ -69,12 +75,10 @@ pub(crate) fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeF
     }
 }
 
-/// Calls any native function except [`NativeFunction::Print`].
-pub(crate) fn call(
-    native: NativeFunction,
-    args: Vec<Value>,
-    span: Span,
-) -> Result<Value, RuntimeError> {
+/// Calls any native function except [`NativeFunction::Print`]. `pub`
+/// for the same reason as `module_bindings` — `aint-vm` reuses this
+/// exact implementation rather than re-deriving stdlib semantics.
+pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Value, RuntimeError> {
     match native {
         NativeFunction::Print => unreachable!("Print is handled directly in Interpreter::call"),
         NativeFunction::TimeSleepMs => {

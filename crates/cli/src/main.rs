@@ -34,6 +34,14 @@ enum Command {
     Run {
         /// Path to a .an source file.
         path: PathBuf,
+        /// Execute via the milestone-22 bytecode VM
+        /// (`AST -> AIR -> Bytecode -> AINT VM`) instead of the
+        /// tree-walking interpreter. Covers AINT's deterministic core
+        /// only - fails clearly, not silently, on `infer`/`tool`/
+        /// `async`/`Distribution<T>`. See
+        /// docs/milestones/22-bytecode-vm/SPEC.md.
+        #[arg(long)]
+        vm: bool,
     },
     /// Run every `test` block in an AINT source file.
     Test {
@@ -57,7 +65,8 @@ fn main() -> ExitCode {
     std::thread::Builder::new()
         .stack_size(STACK_SIZE)
         .spawn(move || match cli.command {
-            Command::Run { path } => run(&path),
+            Command::Run { path, vm: false } => run(&path),
+            Command::Run { path, vm: true } => run_vm(&path),
             Command::Test { path } => test(&path),
         })
         .expect("failed to spawn the interpreter thread")
@@ -109,6 +118,44 @@ fn run(path: &Path) -> ExitCode {
 
     let interpreter = aint_runtime::Interpreter::new();
     match runtime.block_on(interpreter.run(&program)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            eprintln!("{}:{}", path.display(), err);
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `aint run --vm` (milestone 22): the same parse-and-type-check gate
+/// as `run`, then `AST -> AIR -> Bytecode -> AINT VM` instead of the
+/// tree-walking interpreter - synchronously, no Tokio runtime needed,
+/// since the VM's in-scope subset has no `async`/`await` at all. See
+/// `docs/milestones/22-bytecode-vm/SPEC.md` for exactly what's
+/// covered and what fails clearly instead of running.
+fn run_vm(path: &Path) -> ExitCode {
+    let program = match parse_and_check(path) {
+        Ok(program) => program,
+        Err(code) => return code,
+    };
+
+    let air = match aint_ir::lower(&program) {
+        Ok(air) => air,
+        Err(err) => {
+            eprintln!("{}: {err:?}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let compiled = match aint_vm::compile(&air) {
+        Ok(compiled) => compiled,
+        Err(err) => {
+            eprintln!("{}: {err}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut vm = aint_vm::Vm::new(std::io::stdout());
+    match vm.run(&compiled) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("{}:{}", path.display(), err);

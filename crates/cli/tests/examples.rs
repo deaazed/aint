@@ -18,6 +18,17 @@ fn run_aint(path: &str) -> Output {
         .expect("failed to spawn the aint binary")
 }
 
+/// `aint run --vm` (milestone 22): the same command, routed through
+/// the bytecode VM instead of the tree-walking interpreter.
+fn run_aint_vm(path: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_aint"))
+        .arg("run")
+        .arg("--vm")
+        .arg(path)
+        .output()
+        .expect("failed to spawn the aint binary")
+}
+
 fn test_aint(path: &str) -> Output {
     Command::new(env!("CARGO_BIN_EXE_aint"))
         .arg("test")
@@ -73,6 +84,64 @@ AINT CAN ALREADY DO QUITE A LOT
 true
 ";
     assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+/// milestone 22: the same program, the same expected output, routed
+/// through the bytecode VM instead of the tree-walking interpreter -
+/// `showcase.an` has no `infer`/`tool`/`async`, so it's fully in the
+/// VM's scope. See `docs/milestones/22-bytecode-vm/SPEC.md`.
+#[test]
+fn showcase_an_prints_the_same_output_via_the_vm() {
+    let output = run_aint_vm(&example_path("showcase.an"));
+    assert!(output.status.success());
+
+    let expected = "\
+11
+111
+false
+3
+4
+4
+2.4
+3.7
+-2.4
+256
+16
+AINT can already do quite a lot
+31
+AINT CAN ALREADY DO QUITE A LOT
+true
+";
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+}
+
+/// `examples/testing.an` uses `infer`/`tool` - outside the VM's
+/// deterministic-core scope. `--vm` should fail clearly, before
+/// running anything, not silently produce wrong output or panic.
+#[test]
+fn a_program_using_infer_fails_clearly_under_the_vm() {
+    let output = run_aint_vm(&example_path("testing.an"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("doesn't support"),
+        "expected a clear unsupported-operation message, got: {stderr}"
+    );
+}
+
+/// `examples/async.an` uses `async fn` - also outside the VM's scope,
+/// for the same "needs an async dispatch loop" reason.
+#[test]
+fn a_program_using_async_fn_fails_clearly_under_the_vm() {
+    let output = run_aint_vm(&example_path("async.an"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("doesn't support"),
+        "expected a clear unsupported-operation message, got: {stderr}"
+    );
 }
 
 #[test]

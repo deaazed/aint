@@ -18,5 +18,6 @@ aint-parser = { path = "../parser" }
 aint-typechecker = { path = "../typechecker" }
 aint-ir = { path = "../ir" }
 aint-runtime = { path = "../runtime" }
+aint-vm = { path = "../vm" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

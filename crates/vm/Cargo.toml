@@ -1,0 +1,20 @@
+[package]
+name = "aint-vm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "AST -> AIR -> Bytecode -> AINT VM: a stack-based bytecode compiler and VM for AINT's deterministic core."
+
+[dependencies]
+aint-ast = { path = "../ast" }
+aint-ir = { path = "../ir" }
+aint-runtime = { path = "../runtime" }
+
+[dev-dependencies]
+# Only for tests: lets VM tests be written as AINT source text, parsed,
+# type-checked, and lowered exactly like a real `aint run --vm` would,
+# instead of hand-built AIR trees. Matches the pattern established in
+# aint-ir's own tests.
+aint-parser = { path = "../parser" }
+aint-typechecker = { path = "../typechecker" }

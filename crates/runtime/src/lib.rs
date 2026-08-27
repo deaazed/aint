@@ -12,7 +12,7 @@ mod error;
 mod http_model;
 mod interpreter;
 mod model;
-mod stdlib;
+pub mod stdlib;
 mod test_runner;
 mod tool;
 mod trace;

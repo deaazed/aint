@@ -144,7 +144,7 @@ Decide GC vs. reference counting vs. ownership vs. arena allocation, if
 and when the Rust-managed runtime objects from earlier milestones stop
 being sufficient. Don't invent this early.
 
-## 22 — Bytecode VM
+## 22 — Bytecode VM — done
 
 `AST -> AIR -> Bytecode -> AINT VM`, for startup time, execution speed,
 sandboxing, and portability. Still no LLVM.

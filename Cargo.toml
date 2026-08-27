@@ -7,6 +7,7 @@ members = [
     "crates/typechecker",
     "crates/ir",
     "crates/runtime",
+    "crates/vm",
     "crates/cli",
 ]
 
