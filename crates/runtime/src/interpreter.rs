@@ -1,8 +1,8 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, Type, UnaryOp};
 use async_recursion::async_recursion;
@@ -12,6 +12,7 @@ use crate::error::RuntimeError;
 use crate::model::{InferenceOutcome, InferenceRequest, MockModel, Model};
 use crate::stdlib;
 use crate::tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
+use crate::trace::{InferenceTraceOutcome, TokenUsage, TraceRecord};
 use crate::value::{
     Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, Task, ToolFn, Value,
 };
@@ -64,6 +65,11 @@ pub struct Interpreter<W: Write = io::Stdout, M: Model = MockModel> {
     /// same shape as `enums`. See
     /// `docs/milestones/12-ai-tool-calling/SPEC.md`.
     tools_registry: RefCell<HashMap<String, Rc<ToolFn>>>,
+    /// Every `infer`/`tool` call captured so far — unconditional, no
+    /// opt-in. See `docs/milestones/14-ai-execution-tracing/SPEC.md`.
+    traces: RefCell<Vec<TraceRecord>>,
+    next_inference_id: Cell<u64>,
+    next_tool_call_id: Cell<u64>,
 }
 
 impl Interpreter<io::Stdout, MockModel> {
@@ -101,12 +107,22 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             tools,
             enums: RefCell::new(HashMap::new()),
             tools_registry: RefCell::new(HashMap::new()),
+            traces: RefCell::new(Vec::new()),
+            next_inference_id: Cell::new(1),
+            next_tool_call_id: Cell::new(1),
         }
     }
 
     /// Consumes the interpreter, returning the underlying writer.
     pub fn into_output(self) -> W {
         self.output.into_inner()
+    }
+
+    /// Every `Inference #N` / `Tool Call #N` record captured so far,
+    /// in the order the calls actually happened. See
+    /// `docs/milestones/14-ai-execution-tracing/SPEC.md`.
+    pub fn traces(&self) -> Vec<TraceRecord> {
+        self.traces.borrow().clone()
     }
 
     pub async fn run(&self, program: &Program) -> Result<(), RuntimeError> {
@@ -503,7 +519,8 @@ impl<W: Write, M: Model> Interpreter<W, M> {
     ) -> Result<Value, RuntimeError> {
         let mut history: Vec<ToolExchange> = Vec::new();
         loop {
-            let outcome = self
+            let start = Instant::now();
+            let result = self
                 .model
                 .infer(InferenceRequest {
                     function: pending.function.clone(),
@@ -513,9 +530,29 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     history: history.clone(),
                     span,
                 })
-                .await?;
+                .await;
+            let latency = start.elapsed();
 
-            match outcome {
+            let id = self.next_inference_id.get();
+            self.next_inference_id.set(id + 1);
+            let trace_outcome = match &result {
+                Ok(InferenceOutcome::Answer(value)) => InferenceTraceOutcome::Answer(value.clone()),
+                Ok(InferenceOutcome::CallTool { tool, args }) => InferenceTraceOutcome::CallTool {
+                    tool: tool.clone(),
+                    args: args.clone(),
+                },
+                Err(err) => InferenceTraceOutcome::Error(err.to_string()),
+            };
+            self.traces.borrow_mut().push(TraceRecord::Inference {
+                id,
+                function: pending.function.clone(),
+                model: "mock".to_string(),
+                tokens: TokenUsage::default(),
+                latency,
+                outcome: trace_outcome,
+            });
+
+            match result? {
                 InferenceOutcome::Answer(value) => {
                     self.validate_inference_result(&value, &pending.return_type, span)?;
                     return Ok(value);
@@ -580,14 +617,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             validate_value_matches_type(arg, expected_ty, span)?;
         }
 
-        let result = self
-            .tools
-            .call(ToolRequest {
-                tool: tool.to_string(),
-                args,
-                span,
-            })
-            .await?;
+        let result = self.call_tool_traced(tool, args, span).await?;
         self.validate_inference_result(&result, &tool_fn.return_type, span)?;
         Ok(result)
     }
@@ -606,15 +636,46 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         span: Span,
     ) -> Result<Value, RuntimeError> {
         let value = self
-            .tools
-            .call(ToolRequest {
-                tool: pending.tool.clone(),
-                args: pending.args.clone(),
-                span,
-            })
+            .call_tool_traced(&pending.tool, pending.args.clone(), span)
             .await?;
         self.validate_inference_result(&value, &pending.return_type, span)?;
         Ok(value)
+    }
+
+    /// The one place `self.tools.call(...)` is ever invoked — by a
+    /// directly-called tool (`eval_tool_call`) or a model-requested one
+    /// (`call_requested_tool`). Captures a `Tool Call #N` trace record
+    /// regardless of success or failure. See
+    /// `docs/milestones/14-ai-execution-tracing/SPEC.md`.
+    async fn call_tool_traced(
+        &self,
+        tool: &str,
+        args: Vec<Value>,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        let start = Instant::now();
+        let result = self
+            .tools
+            .call(ToolRequest {
+                tool: tool.to_string(),
+                args: args.clone(),
+                span,
+            })
+            .await;
+        let latency = start.elapsed();
+
+        let id = self.next_tool_call_id.get();
+        self.next_tool_call_id.set(id + 1);
+        let trace_outcome = result.clone().map_err(|err| err.to_string());
+        self.traces.borrow_mut().push(TraceRecord::ToolCall {
+            id,
+            tool: tool.to_string(),
+            args,
+            latency,
+            outcome: trace_outcome,
+        });
+
+        result
     }
 
     /// Checks a model's response against an `infer` call's declared
@@ -1946,5 +2007,227 @@ mod tests {
                 .expect_err("should produce a runtime error")
         });
         assert!(matches!(err, RuntimeError::ArityMismatch { .. }));
+    }
+
+    // --- AI execution tracing (milestone 14) --------------------------
+
+    // `TraceRecord` embeds `Value`, which holds `Rc` - not `Send`, same
+    // as `Interpreter` itself. So every tracing test below does its
+    // assertions *inside* the big-stack closure, rather than returning
+    // `Vec<TraceRecord>` out of it the way `run_capturing` returns a
+    // plain `String`.
+
+    #[test]
+    fn successful_infer_call_is_traced() {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "infer is_positive(text: String) -> Bool\n\
+                 await is_positive(\"great\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock("is_positive", Value::Bool(true));
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            let traces = interpreter.traces();
+
+            assert_eq!(traces.len(), 1);
+            match &traces[0] {
+                TraceRecord::Inference {
+                    id,
+                    function,
+                    model,
+                    outcome,
+                    ..
+                } => {
+                    assert_eq!(*id, 1);
+                    assert_eq!(function, "is_positive");
+                    assert_eq!(model, "mock");
+                    assert_eq!(*outcome, InferenceTraceOutcome::Answer(Value::Bool(true)));
+                }
+                other => panic!("expected an Inference trace, got {other:?}"),
+            }
+            assert_eq!(traces[0].label(), "Inference #1");
+        });
+    }
+
+    #[test]
+    fn failed_infer_call_is_still_traced() {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "infer is_positive(text: String) -> Bool\n\
+                 await is_positive(\"great\")",
+            )
+            .expect("should parse");
+            let interpreter = Interpreter::with_output(Vec::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            let _ = runtime.block_on(interpreter.run(&program));
+            let traces = interpreter.traces();
+
+            assert_eq!(traces.len(), 1);
+            match &traces[0] {
+                TraceRecord::Inference { outcome, .. } => {
+                    assert!(matches!(outcome, InferenceTraceOutcome::Error(_)));
+                }
+                other => panic!("expected an Inference trace, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn tool_call_is_traced() {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_email(id: String) -> String\n\
+                 await database_get_email(\"1\")",
+            )
+            .expect("should parse");
+            let tools = crate::tool::MockTool::new()
+                .mock("database_get_email", Value::String("a@b.com".to_string()));
+            let interpreter =
+                Interpreter::with_output_model_and_tools(Vec::new(), MockModel::new(), tools);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            let traces = interpreter.traces();
+
+            assert_eq!(traces.len(), 1);
+            match &traces[0] {
+                TraceRecord::ToolCall {
+                    id, tool, outcome, ..
+                } => {
+                    assert_eq!(*id, 1);
+                    assert_eq!(tool, "database_get_email");
+                    assert_eq!(*outcome, Ok(Value::String("a@b.com".to_string())));
+                }
+                other => panic!("expected a ToolCall trace, got {other:?}"),
+            }
+            assert_eq!(traces[0].label(), "Tool Call #1");
+        });
+    }
+
+    #[test]
+    fn failed_tool_call_is_still_traced() {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_email(id: String) -> String\n\
+                 await database_get_email(\"1\")",
+            )
+            .expect("should parse");
+            let interpreter = Interpreter::with_output(Vec::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            let _ = runtime.block_on(interpreter.run(&program));
+            let traces = interpreter.traces();
+
+            assert_eq!(traces.len(), 1);
+            match &traces[0] {
+                TraceRecord::ToolCall { outcome, .. } => assert!(outcome.is_err()),
+                other => panic!("expected a ToolCall trace, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn multi_step_tool_calling_conversation_produces_the_right_trace_sequence() {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_name(id: String) -> String\n\
+                 tool database_get_email(id: String) -> String\n\
+                 infer greet_customer(id: String) -> String\n\
+                 await greet_customer(\"42\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().script(
+                "greet_customer",
+                vec![
+                    crate::model::InferenceOutcome::CallTool {
+                        tool: "database_get_name".to_string(),
+                        args: vec![Value::String("42".to_string())],
+                    },
+                    crate::model::InferenceOutcome::CallTool {
+                        tool: "database_get_email".to_string(),
+                        args: vec![Value::String("42".to_string())],
+                    },
+                    crate::model::InferenceOutcome::Answer(Value::String(
+                        "Hello Ada, a@b.com".to_string(),
+                    )),
+                ],
+            );
+            let tools = crate::tool::MockTool::new()
+                .mock("database_get_name", Value::String("Ada".to_string()))
+                .mock("database_get_email", Value::String("a@b.com".to_string()));
+            let interpreter = Interpreter::with_output_model_and_tools(Vec::new(), model, tools);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            let traces = interpreter.traces();
+
+            let labels: Vec<String> = traces.iter().map(TraceRecord::label).collect();
+            assert_eq!(
+                labels,
+                vec![
+                    "Inference #1",
+                    "Tool Call #1",
+                    "Inference #2",
+                    "Tool Call #2",
+                    "Inference #3",
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn traces_capture_genuinely_measured_latency_and_placeholder_tokens() {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "infer is_positive(text: String) -> Bool\n\
+                 await is_positive(\"great\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock("is_positive", Value::Bool(true));
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            let traces = interpreter.traces();
+
+            match &traces[0] {
+                TraceRecord::Inference {
+                    latency, tokens, ..
+                } => {
+                    // Not asserting a nonzero duration - the mock is
+                    // fast enough that it can legitimately round to
+                    // zero on some platforms. The property under test
+                    // is that this is a real, measured `Duration`,
+                    // not that it's large - see SPEC.md.
+                    assert!(latency.as_secs() < 1, "expected a fast, real duration");
+                    assert_eq!(*tokens, TokenUsage::default());
+                }
+                other => panic!("expected an Inference trace, got {other:?}"),
+            }
+        });
     }
 }

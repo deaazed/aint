@@ -99,7 +99,7 @@ agents — not a separate `agent` primitive.
 `pure`, `inference`, `tool`, `network`, `filesystem` as declared function
 effects, checked by the compiler.
 
-## 14 — AI execution tracing
+## 14 — AI execution tracing — done
 
 `Inference #N` / `Tool Call #N` records built into the runtime: model,
 tokens, latency, output. Not a library you opt into — part of the
