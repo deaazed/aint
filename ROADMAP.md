@@ -110,7 +110,7 @@ execution model.
 `test { mock ... assert ... }` blocks. `aint test` must pass completely
 offline.
 
-## 16 — Model adapters
+## 16 — Model adapters — done
 
 `Model` implementations beyond `Mock`: vLLM, OpenAI-compatible APIs,
 Ollama. Source code never names a vendor; deployment config does.

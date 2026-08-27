@@ -9,6 +9,7 @@
 
 mod environment;
 mod error;
+mod http_model;
 mod interpreter;
 mod model;
 mod stdlib;
@@ -18,6 +19,7 @@ mod trace;
 mod value;
 
 pub use error::RuntimeError;
+pub use http_model::HttpModel;
 pub use interpreter::Interpreter;
 pub use model::{InferenceOutcome, InferenceRequest, MockModel, Model};
 pub use test_runner::{run_tests, TestOutcome};

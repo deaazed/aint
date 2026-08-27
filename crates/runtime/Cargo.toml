@@ -20,6 +20,15 @@ async-recursion = "1"
 # Backs `distribution_sample` only (milestone 10) — a weighted random
 # draw over a Distribution<T>'s reported probabilities.
 rand = "0.8"
+# Backs `HttpModel` only (milestone 16) — the one real network call
+# anywhere in this crate. native-tls (the OS's own TLS: SChannel on
+# Windows, Secure Transport on macOS, OpenSSL on Linux) instead of
+# rustls: rustls's `ring` dependency needs a working C toolchain to
+# build its assembly, which isn't available on every dev machine this
+# targets; native-tls needs no C compiler on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 # Only for tests: makes it possible to write test programs as AINT
