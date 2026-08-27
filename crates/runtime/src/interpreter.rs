@@ -11,7 +11,10 @@ use crate::environment::Environment;
 use crate::error::RuntimeError;
 use crate::model::{InferenceRequest, MockModel, Model};
 use crate::stdlib;
-use crate::value::{Function, InferenceFn, NativeFunction, PendingInference, Task, Value};
+use crate::tool::{MockTool, ToolRequest};
+use crate::value::{
+    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, Task, ToolFn, Value,
+};
 
 /// Signals whether a `return` unwound out of the statement/block just
 /// executed. Rust has no exceptions, so this is the tree-walk
@@ -46,6 +49,10 @@ pub struct Interpreter<W: Write = io::Stdout, M: Model = MockModel> {
     globals: Rc<RefCell<Environment>>,
     output: RefCell<W>,
     model: M,
+    /// Backs every `tool` call — concrete, not generic, unlike `model`;
+    /// see `docs/milestones/11-typed-tools/SPEC.md` for why tools don't
+    /// need the same swappable-implementation treatment `Model` does.
+    tools: MockTool,
     /// Every declared `enum`, by name, to its variant names — populated
     /// as `StmtKind::Enum` statements execute. Used to validate a
     /// model's response against the schema an `infer` call declared.
@@ -73,6 +80,10 @@ impl<W: Write> Interpreter<W, MockModel> {
 
 impl<W: Write, M: Model> Interpreter<W, M> {
     pub fn with_output_and_model(output: W, model: M) -> Self {
+        Self::with_output_model_and_tools(output, model, MockTool::new())
+    }
+
+    pub fn with_output_model_and_tools(output: W, model: M, tools: MockTool) -> Self {
         let globals = Environment::new();
         globals
             .borrow_mut()
@@ -81,6 +92,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             globals,
             output: RefCell::new(output),
             model,
+            tools,
             enums: RefCell::new(HashMap::new()),
         }
     }
@@ -166,6 +178,20 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     return_type: return_type.clone(),
                 }));
                 env.borrow_mut().define(name.clone(), infer_fn);
+                Ok(Flow::Normal)
+            }
+            StmtKind::Tool {
+                name,
+                params,
+                return_type,
+            } => {
+                // Same reasoning as `StmtKind::Infer` just above.
+                let tool_fn = Value::ToolFn(Rc::new(ToolFn {
+                    name: name.clone(),
+                    params: params.iter().map(|p| p.name.clone()).collect(),
+                    return_type: return_type.clone(),
+                }));
+                env.borrow_mut().define(name.clone(), tool_fn);
                 Ok(Flow::Normal)
             }
             StmtKind::Enum { name, variants } => {
@@ -313,6 +339,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 match value {
                     Value::Task(task) => self.eval_await(&task, expr.span).await,
                     Value::Inference(pending) => self.eval_inference(&pending, expr.span).await,
+                    Value::ToolCall(pending) => self.eval_tool_call(&pending, expr.span).await,
                     other => Err(RuntimeError::TypeMismatch {
                         message: format!("cannot await a {}", other.type_name()),
                         span: expr.span,
@@ -388,6 +415,23 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     return_type: infer_fn.return_type.clone(),
                 })))
             }
+            Value::ToolFn(tool_fn) => {
+                if tool_fn.params.len() != args.len() {
+                    return Err(RuntimeError::ArityMismatch {
+                        name: tool_fn.name.clone(),
+                        expected: tool_fn.params.len(),
+                        found: args.len(),
+                        span,
+                    });
+                }
+                // Deferred, not run: same reasoning as `InferenceFn`
+                // just above.
+                Ok(Value::ToolCall(Rc::new(PendingToolCall {
+                    tool: tool_fn.name.clone(),
+                    args,
+                    return_type: tool_fn.return_type.clone(),
+                })))
+            }
             other => Err(RuntimeError::NotCallable {
                 type_name: other.type_name(),
                 span,
@@ -441,6 +485,31 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 function: pending.function.clone(),
                 args: pending.args.clone(),
                 return_type: pending.return_type.clone(),
+                span,
+            })
+            .await?;
+        self.validate_inference_result(&value, &pending.return_type, span)?;
+        Ok(value)
+    }
+
+    /// Actually runs the deferred computation behind a
+    /// `Value::ToolCall` — the tool-calling counterpart of
+    /// `eval_inference`. Reuses `validate_inference_result` as-is: its
+    /// logic (does this `Value` actually match this declared `Type`)
+    /// has nothing model-specific about it — a `MockTool` can be
+    /// misconfigured with an invalid enum variant exactly as easily as
+    /// `MockModel` can. See
+    /// `docs/milestones/11-typed-tools/SPEC.md`.
+    async fn eval_tool_call(
+        &self,
+        pending: &PendingToolCall,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
+        let value = self
+            .tools
+            .call(ToolRequest {
+                tool: pending.tool.clone(),
+                args: pending.args.clone(),
                 span,
             })
             .await?;
@@ -1427,5 +1496,140 @@ mod tests {
                 .expect_err("should produce a runtime error")
         });
         assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    // --- tool --------------------------------------------------------
+
+    /// Same reasoning as `run_capturing_with_model`: `MockTool` holding
+    /// a mocked `Value` isn't `Send`, so it's built from a `Send`
+    /// builder closure inside the big-stack thread, not captured from
+    /// outside it.
+    fn run_capturing_with_tools(
+        src: &'static str,
+        build_tools: impl FnOnce() -> crate::tool::MockTool + Send + 'static,
+    ) -> String {
+        run_on_big_stack(move || {
+            let program = aint_parser::parse_source(src).expect("should parse");
+            let interpreter = Interpreter::with_output_model_and_tools(
+                Vec::new(),
+                MockModel::new(),
+                build_tools(),
+            );
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect("should run without error");
+            String::from_utf8(interpreter.into_output()).expect("output should be valid utf8")
+        })
+    }
+
+    #[test]
+    fn calling_a_tool_without_await_does_not_touch_the_mock() {
+        // An unconfigured MockTool would error if this ran. It
+        // shouldn't - nothing awaits it, same as an unawaited infer.
+        assert_eq!(
+            run_capturing_with_tools(
+                "tool database_get_email(id: String) -> String\n\
+                 let _pending = database_get_email(\"1\")\n\
+                 print(1)",
+                crate::tool::MockTool::new,
+            ),
+            "1\n"
+        );
+    }
+
+    #[test]
+    fn awaiting_a_tool_call_returns_the_mocked_value() {
+        assert_eq!(
+            run_capturing_with_tools(
+                "tool database_get_email(id: String) -> String\n\
+                 print(await database_get_email(\"1\"))",
+                || crate::tool::MockTool::new()
+                    .mock("database_get_email", Value::String("a@b.com".to_string())),
+            ),
+            "a@b.com\n"
+        );
+    }
+
+    #[test]
+    fn tool_returning_an_enum_is_schema_validated() {
+        assert_eq!(
+            run_capturing_with_tools(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 tool classify_cached(text: String) -> Sentiment\n\
+                 print(await classify_cached(\"x\") == Sentiment_Positive)",
+                || {
+                    crate::tool::MockTool::new().mock(
+                        "classify_cached",
+                        Value::Enum("Sentiment".to_string(), "Positive".to_string()),
+                    )
+                },
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn tool_returning_a_hallucinated_variant_is_a_schema_violation() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 tool classify_cached(text: String) -> Sentiment\n\
+                 print(await classify_cached(\"x\"))",
+            )
+            .expect("should parse");
+            let tools = crate::tool::MockTool::new().mock(
+                "classify_cached",
+                Value::Enum("Sentiment".to_string(), "Ecstatic".to_string()),
+            );
+            let interpreter =
+                Interpreter::with_output_model_and_tools(Vec::new(), MockModel::new(), tools);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    #[test]
+    fn awaiting_an_unconfigured_tool_call_is_a_clear_tool_error() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "tool database_get_email(id: String) -> String\n\
+                 await database_get_email(\"1\")",
+            )
+            .expect("should parse");
+            let interpreter = Interpreter::with_output(Vec::new());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::ToolError { .. }));
+    }
+
+    #[test]
+    fn tool_and_infer_are_independent_mocks() {
+        // A tool and an infer function can share a name-space-adjacent
+        // identity without either mock leaking into the other's table.
+        assert_eq!(
+            run_capturing_with_tools(
+                "infer classify(text: String) -> Bool\n\
+                 tool classify_cached(text: String) -> Bool\n\
+                 print(await classify_cached(\"x\"))",
+                || crate::tool::MockTool::new().mock("classify_cached", Value::Bool(true)),
+            ),
+            "true\n"
+        );
     }
 }

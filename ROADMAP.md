@@ -81,7 +81,7 @@ schema before it becomes an AINT value.
 `sample()`, `require_confidence()`. Decide, explicitly and in writing,
 what "probability" means here — see `LANGUAGE_DESIGN.md`.
 
-## 11 — Typed tools
+## 11 — Typed tools — done
 
 `tool database.get_customer(id: String) -> Customer`. Name, input
 schema, output schema, effect, permissions, timeout. Runtime validates

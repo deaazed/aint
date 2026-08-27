@@ -57,6 +57,15 @@ pub enum RuntimeError {
         message: String,
         span: Span,
     },
+    /// A `MockTool` (or, later, a real tool backend) couldn't answer a
+    /// `tool` call — for `MockTool`, nothing was configured for that
+    /// tool name. Kept distinct from `ModelError`: a different external
+    /// system, named honestly. See
+    /// `docs/milestones/11-typed-tools/SPEC.md`.
+    ToolError {
+        message: String,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -73,7 +82,8 @@ impl RuntimeError {
             | RuntimeError::UnknownModule { span, .. }
             | RuntimeError::IndexOutOfBounds { span, .. }
             | RuntimeError::ModelError { span, .. }
-            | RuntimeError::SchemaViolation { span, .. } => *span,
+            | RuntimeError::SchemaViolation { span, .. }
+            | RuntimeError::ToolError { span, .. } => *span,
         }
     }
 }
@@ -116,6 +126,9 @@ impl fmt::Display for RuntimeError {
             }
             RuntimeError::SchemaViolation { message, span } => {
                 write!(f, "{}: schema violation: {message}", span.start)
+            }
+            RuntimeError::ToolError { message, span } => {
+                write!(f, "{}: tool error: {message}", span.start)
             }
         }
     }

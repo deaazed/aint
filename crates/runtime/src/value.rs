@@ -40,6 +40,15 @@ pub enum Value {
     /// Rust's own `Option` for the Some/None shape rather than
     /// inventing parallel variants.
     Option(Option<Box<Value>>),
+    /// A `tool`-declared function itself — callable, but has no body to
+    /// run; calling it produces a [`Value::ToolCall`] instead.
+    /// Structurally identical to [`Value::InferenceFn`], kept separate
+    /// — see `docs/milestones/11-typed-tools/SPEC.md`.
+    ToolFn(Rc<ToolFn>),
+    /// A deferred call to a `tool`-declared function — captured, not
+    /// run, exactly like [`Value::Inference`]. `await` sends it to the
+    /// interpreter's `MockTool`.
+    ToolCall(Rc<PendingToolCall>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -98,6 +107,24 @@ pub struct PendingInference {
     pub return_type: Type,
 }
 
+/// A `tool`-declared function: name, parameter names, and declared
+/// return type — the runtime counterpart of [`InferenceFn`].
+#[derive(Debug, PartialEq)]
+pub struct ToolFn {
+    pub name: String,
+    pub params: Vec<String>,
+    pub return_type: Type,
+}
+
+/// The deferred computation behind a [`Value::ToolCall`] — the runtime
+/// counterpart of [`PendingInference`].
+#[derive(Debug, PartialEq)]
+pub struct PendingToolCall {
+    pub tool: String,
+    pub args: Vec<Value>,
+    pub return_type: Type,
+}
+
 /// A function implemented in the runtime itself rather than in AINT
 /// source: `print` (always available) plus the stdlib functions gated
 /// behind `import` (milestone 06). See
@@ -146,9 +173,12 @@ impl Value {
             Value::Bool(_) => "Bool",
             Value::Unit => "Unit",
             Value::List(_) => "List",
-            Value::Function(_) | Value::Native(_) | Value::InferenceFn(_) => "Function",
+            Value::Function(_) | Value::Native(_) | Value::InferenceFn(_) | Value::ToolFn(_) => {
+                "Function"
+            }
             Value::Task(_) => "Task",
             Value::Inference(_) => "Inference",
+            Value::ToolCall(_) => "Tool",
             // The specific enum name is dynamic and this method
             // returns `&'static str`; callers that need it match on
             // `Value::Enum` directly instead (see e.g.
@@ -196,6 +226,8 @@ impl fmt::Display for Value {
             }
             Value::Option(Some(inner)) => write!(f, "Some({inner})"),
             Value::Option(None) => write!(f, "None"),
+            Value::ToolFn(tool_fn) => write!(f, "<tool fn {}>", tool_fn.name),
+            Value::ToolCall(pending) => write!(f, "<tool call {}>", pending.tool),
         }
     }
 }

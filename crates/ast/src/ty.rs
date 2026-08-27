@@ -32,6 +32,11 @@ pub enum Type {
     /// See `docs/milestones/10-uncertainty/SPEC.md` for the explicit
     /// decision on what "probability" means.
     Distribution(Box<Type>),
+    /// The type of an unawaited call to a `tool`-declared function.
+    /// Structurally identical to `Task`/`Inference` and deliberately
+    /// kept as its own type rather than reusing one of them — see
+    /// `docs/milestones/11-typed-tools/SPEC.md`.
+    Tool(Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -48,6 +53,7 @@ impl fmt::Display for Type {
             Type::Inference(inner) => write!(f, "Inference<{inner}>"),
             Type::Enum(name) => write!(f, "{name}"),
             Type::Distribution(inner) => write!(f, "Distribution<{inner}>"),
+            Type::Tool(inner) => write!(f, "Tool<{inner}>"),
         }
     }
 }

@@ -103,6 +103,7 @@ impl Parser {
             TokenKind::Import => self.parse_import_statement(),
             TokenKind::Infer => self.parse_infer_statement(),
             TokenKind::Enum => self.parse_enum_statement(),
+            TokenKind::Tool => self.parse_tool_statement(),
             _ => self.parse_expr_statement(),
         }
     }
@@ -190,6 +191,42 @@ impl Parser {
         let span = Span::new(infer_token.span.start, return_span.end);
         Ok(Stmt::new(
             StmtKind::Infer {
+                name,
+                params,
+                return_type,
+            },
+            span,
+        ))
+    }
+
+    /// Parses `tool name(params) -> Type` — no body, same shape as
+    /// `parse_infer_statement`, kept separate rather than shared; see
+    /// `docs/milestones/11-typed-tools/SPEC.md`.
+    fn parse_tool_statement(&mut self) -> Result<Stmt, ParseError> {
+        let tool_token = self.expect(TokenKind::Tool, "`tool`")?;
+        let (name, _) = self.expect_identifier()?;
+        self.expect(TokenKind::LeftParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let (param_name, _) = self.expect_identifier()?;
+                self.expect(TokenKind::Colon, "`:`")?;
+                let (ty, _) = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                });
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen, "`)`")?;
+        self.expect(TokenKind::Arrow, "`->`")?;
+        let (return_type, return_span) = self.parse_type()?;
+        let span = Span::new(tool_token.span.start, return_span.end);
+        Ok(Stmt::new(
+            StmtKind::Tool {
                 name,
                 params,
                 return_type,
@@ -858,6 +895,38 @@ mod tests {
         match stmt.kind {
             StmtKind::Enum { variants, .. } => assert_eq!(variants, vec!["Only"]),
             other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tool_statement() {
+        let stmt = parse_one_stmt("tool database_get_email(id: String) -> String");
+        match stmt.kind {
+            StmtKind::Tool {
+                name,
+                params,
+                return_type,
+            } => {
+                assert_eq!(name, "database_get_email");
+                assert_eq!(
+                    params,
+                    vec![Param {
+                        name: "id".to_string(),
+                        ty: Type::String,
+                    }]
+                );
+                assert_eq!(return_type, Type::String);
+            }
+            other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tool_statement_with_no_params() {
+        let stmt = parse_one_stmt("tool clock_now() -> Int");
+        match stmt.kind {
+            StmtKind::Tool { params, .. } => assert!(params.is_empty()),
+            other => panic!("expected Tool, got {other:?}"),
         }
     }
 

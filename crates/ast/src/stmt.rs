@@ -51,6 +51,16 @@ pub enum StmtKind {
         name: String,
         variants: Vec<String>,
     },
+    /// A signature-only declaration: `tool name(params) -> Type`, no
+    /// body — structurally identical to `Infer` but kept as its own
+    /// variant, not shared, since they diverge starting the next
+    /// milestone each is involved in. See
+    /// `docs/milestones/11-typed-tools/SPEC.md`.
+    Tool {
+        name: String,
+        params: Vec<Param>,
+        return_type: Type,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

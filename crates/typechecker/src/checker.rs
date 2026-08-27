@@ -54,6 +54,7 @@ enum CallMode {
     Sync,
     Async,
     Infer,
+    ToolCall,
 }
 
 /// Single-pass static type checker over the AST from `aint-ast`.
@@ -137,6 +138,16 @@ impl TypeChecker {
                         Binding::Function(signature(params, return_type, CallMode::Infer)),
                     );
                 }
+                StmtKind::Tool {
+                    name,
+                    params,
+                    return_type,
+                } => {
+                    self.define(
+                        name.clone(),
+                        Binding::Function(signature(params, return_type, CallMode::ToolCall)),
+                    );
+                }
                 _ => {}
             }
         }
@@ -185,7 +196,8 @@ impl TypeChecker {
             Type::List(inner)
             | Type::Option(inner)
             | Type::Task(inner)
-            | Type::Inference(inner) => self.validate_type(inner, span),
+            | Type::Inference(inner)
+            | Type::Tool(inner) => self.validate_type(inner, span),
             Type::Distribution(inner) => match inner.as_ref() {
                 Type::Enum(_) => self.validate_type(inner, span),
                 other => Err(TypeError::Mismatch {
@@ -262,6 +274,23 @@ impl TypeChecker {
                 self.define(
                     name.clone(),
                     Binding::Function(signature(params, return_type, CallMode::Infer)),
+                );
+                for param in params {
+                    self.validate_type(&param.ty, stmt.span)?;
+                }
+                self.validate_type(return_type, stmt.span)?;
+                Ok(())
+            }
+            StmtKind::Tool {
+                name,
+                params,
+                return_type,
+            } => {
+                // Same reasoning as the `Infer` arm just above - see
+                // `docs/milestones/11-typed-tools/SPEC.md`.
+                self.define(
+                    name.clone(),
+                    Binding::Function(signature(params, return_type, CallMode::ToolCall)),
                 );
                 for param in params {
                     self.validate_type(&param.ty, stmt.span)?;
@@ -471,8 +500,11 @@ impl TypeChecker {
                 match ty {
                     Type::Task(inner_ty) => Ok(*inner_ty),
                     Type::Inference(inner_ty) => Ok(*inner_ty),
+                    Type::Tool(inner_ty) => Ok(*inner_ty),
                     other => Err(TypeError::Mismatch {
-                        message: format!("cannot await {other}; expected a Task or an Inference"),
+                        message: format!(
+                            "cannot await {other}; expected a Task, an Inference, or a Tool"
+                        ),
                         span: inner.span,
                     }),
                 }
@@ -578,6 +610,7 @@ impl TypeChecker {
             CallMode::Sync => Ok(sig.return_type),
             CallMode::Async => Ok(Type::Task(Box::new(sig.return_type))),
             CallMode::Infer => Ok(Type::Inference(Box::new(sig.return_type))),
+            CallMode::ToolCall => Ok(Type::Tool(Box::new(sig.return_type))),
         }
     }
 
@@ -1209,6 +1242,64 @@ mod tests {
              fn f(d: Distribution<Sentiment>) -> Sentiment { return distribution_argmax(d) }",
         )
         .unwrap_err();
+        assert!(matches!(err, TypeError::UndefinedFunction { .. }));
+    }
+
+    // --- tool ------------------------------------------------------------
+
+    #[test]
+    fn calling_a_tool_without_await_yields_a_tool_type() {
+        let err = check(
+            "tool database_get_email(id: String) -> String\n\
+             print(database_get_email(\"1\") == \"x\")",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn awaiting_a_tool_call_yields_the_declared_return_type() {
+        assert!(check(
+            "tool database_get_email(id: String) -> String\n\
+             print(await database_get_email(\"1\") == \"x\")"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn tool_call_still_checks_argument_types_and_arity() {
+        let err = check(
+            "tool database_get_email(id: String) -> String\n\
+             await database_get_email(1)",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));
+    }
+
+    #[test]
+    fn tool_can_be_called_before_its_declaration() {
+        assert!(check(
+            "fn f() -> String { return await database_get_email(\"1\") }\n\
+             tool database_get_email(id: String) -> String"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn tool_can_return_an_enum() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             tool classify_cached(text: String) -> Sentiment\n\
+             print(await classify_cached(\"x\") == Sentiment_Positive)"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn calling_an_undeclared_tool_is_undefined_function() {
+        // The static guarantee this milestone actually delivers: see
+        // SPEC.md on what's deferred to milestone 12.
+        let err = check("await nonexistent_tool(\"x\")").unwrap_err();
         assert!(matches!(err, TypeError::UndefinedFunction { .. }));
     }
 }
