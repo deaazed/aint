@@ -8,3 +8,12 @@ description = "AINT Intermediate Representation (AIR): lowers the typed AST into
 
 [dependencies]
 aint-ast = { path = "../ast" }
+
+[dev-dependencies]
+# Only for tests: lets lowering tests be written as AINT source text
+# instead of hand-built AST trees, and type-checked first so tests
+# reflect what lowering actually receives in practice. Matches the
+# pattern already established in aint-runtime/aint-typechecker's own
+# tests.
+aint-parser = { path = "../parser" }
+aint-typechecker = { path = "../typechecker" }

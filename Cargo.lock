@@ -25,6 +25,8 @@ name = "aint-ir"
 version = "0.1.0"
 dependencies = [
  "aint-ast",
+ "aint-parser",
+ "aint-typechecker",
 ]
 
 [[package]]

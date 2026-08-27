@@ -120,7 +120,7 @@ Ollama. Source code never names a vendor; deployment config does.
 `budget { max_tokens max_model_calls max_cost timeout }` enforced by the
 runtime as a real resource constraint.
 
-## 18 — Compiler IR (AIR)
+## 18 — Compiler IR (AIR) — done
 
 Once surface semantics have stabilized: typed AST -> AIR, with explicit
 `INFER`, `TOOL_CALL`, `DISTRIBUTION`, `PROBABILITY` operations instead of
