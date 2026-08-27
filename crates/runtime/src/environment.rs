@@ -7,6 +7,20 @@ use crate::value::Value;
 /// A lexical scope: a table of bindings plus an optional parent to fall
 /// through to. Shared (`Rc<RefCell<_>>`) since a function call needs to
 /// both own its local scope and read from an enclosing one.
+///
+/// This is the only type in the runtime holding an `Rc` to another
+/// instance of itself, which makes it the one place reference counting
+/// could leak via a cycle. It can't, today: `parent` only ever points
+/// upward (nothing holds a reference back down from parent to child),
+/// and no [`crate::Value`] variant carries an `Environment` reference
+/// — `Function` holds an AST fragment (`body: Block`), not a captured
+/// scope, because milestone 04 parents every call frame to globals
+/// rather than modeling real closures. That keeps this graph a tree,
+/// not just in shape but by there being nothing available to close the
+/// loop with. If real closures are ever added — a function value
+/// capturing *this* environment instead of just globals — that
+/// argument stops holding and needs to be re-checked; see
+/// `docs/milestones/21-memory-model/SPEC.md`.
 #[derive(Debug, Default)]
 pub struct Environment {
     values: HashMap<String, Value>,

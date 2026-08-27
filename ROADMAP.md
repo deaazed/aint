@@ -138,7 +138,7 @@ Permissions, sandboxing, filesystem/network restrictions, tool
 authorization, secret management, resource limits. Non-optional once a
 model can call tools.
 
-## 21 — Memory model
+## 21 — Memory model — done
 
 Decide GC vs. reference counting vs. ownership vs. arena allocation, if
 and when the Rust-managed runtime objects from earlier milestones stop
