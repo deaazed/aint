@@ -75,6 +75,16 @@ fn async_an_prints_and_exits_zero() {
 }
 
 #[test]
+fn enums_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("enums.an"));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "North\nEast\nNorth\ntrue\ntrue\ntrue\ntrue\nfalse\n"
+    );
+}
+
+#[test]
 fn a_type_error_is_rejected_before_anything_runs() {
     let path = std::env::temp_dir().join(format!("aint_cli_type_error_{}.an", std::process::id()));
     std::fs::write(

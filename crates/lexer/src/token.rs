@@ -22,6 +22,7 @@ pub enum TokenKind {
     Async,
     Await,
     Infer,
+    Enum,
 
     // Operators
     Plus,
@@ -66,6 +67,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Async => write!(f, "`async`"),
             TokenKind::Await => write!(f, "`await`"),
             TokenKind::Infer => write!(f, "`infer`"),
+            TokenKind::Enum => write!(f, "`enum`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -115,6 +117,7 @@ pub(crate) fn keyword(word: &str) -> Option<TokenKind> {
         "async" => TokenKind::Async,
         "await" => TokenKind::Await,
         "infer" => TokenKind::Infer,
+        "enum" => TokenKind::Enum,
         _ => return None,
     })
 }

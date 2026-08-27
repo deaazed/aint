@@ -1,0 +1,42 @@
+enum Direction { North East South West }
+
+fn turn_right(d: Direction) -> Direction {
+    if d == Direction_North { return Direction_East }
+    if d == Direction_East { return Direction_South }
+    if d == Direction_South { return Direction_West }
+    return Direction_North
+}
+
+fn turn_around(d: Direction, times: Int) -> Direction {
+    if times == 0 {
+        return d
+    } else {
+        return turn_around(turn_right(d), times - 1)
+    }
+}
+
+fn name(d: Direction) -> String {
+    if d == Direction_North { return "North" }
+    if d == Direction_East { return "East" }
+    if d == Direction_South { return "South" }
+    return "West"
+}
+
+let start = Direction_North
+print(name(start))
+print(name(turn_right(start)))
+print(name(turn_around(start, 4)))
+print(turn_around(start, 4) == start)
+print(turn_around(start, 2) == Direction_South)
+
+enum Sentiment { Positive Neutral Negative }
+
+fn flip(s: Sentiment) -> Sentiment {
+    if s == Sentiment_Positive { return Sentiment_Negative }
+    if s == Sentiment_Negative { return Sentiment_Positive }
+    return Sentiment_Neutral
+}
+
+print(flip(Sentiment_Positive) == Sentiment_Negative)
+print(flip(Sentiment_Neutral) == Sentiment_Neutral)
+print(flip(Sentiment_Positive) == Sentiment_Positive)

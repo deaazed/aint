@@ -42,6 +42,12 @@ enum CallMode {
 pub struct TypeChecker {
     scopes: Vec<HashMap<String, Binding>>,
     current_return_type: Option<Type>,
+    /// Every declared `enum`, by name, to its variant names — checked
+    /// against by `validate_type` and populated before anything else,
+    /// so `enum` declarations get the same forward-reference support
+    /// `fn`/`infer` already have. See
+    /// `docs/milestones/09-typed-structured-inference/SPEC.md`.
+    enums: HashMap<String, Vec<String>>,
 }
 
 impl Default for TypeChecker {
@@ -55,13 +61,30 @@ impl TypeChecker {
         Self {
             scopes: vec![HashMap::new()],
             current_return_type: None,
+            enums: HashMap::new(),
         }
     }
 
     pub fn check(&mut self, program: &Program) -> Result<(), TypeError> {
-        // Hoist every top-level `fn` signature before checking any
-        // body, so forward references and mutual/self recursion between
-        // top-level functions type-check regardless of source order.
+        // Enums are hoisted first, and separately, so a `fn`/`infer`
+        // signature appearing earlier in the file can still reference
+        // one declared later.
+        for stmt in &program.statements {
+            if let StmtKind::Enum { name, variants } = &stmt.kind {
+                self.enums.insert(name.clone(), variants.clone());
+                for variant in variants {
+                    self.define(
+                        format!("{name}_{variant}"),
+                        Binding::Variable(Type::Enum(name.clone())),
+                    );
+                }
+            }
+        }
+
+        // Hoist every top-level `fn`/`infer` signature before checking
+        // any body, so forward references and mutual/self recursion
+        // between top-level functions type-check regardless of source
+        // order.
         for stmt in &program.statements {
             match &stmt.kind {
                 StmtKind::Fn {
@@ -120,6 +143,30 @@ impl TypeChecker {
         self.scopes.iter().rev().find_map(|scope| scope.get(name))
     }
 
+    /// Rejects a `Type::Enum` that doesn't name a declared enum,
+    /// recursing into `List`/`Option`/`Task`/`Inference`'s inner type.
+    /// Needed because `parse_type` can no longer reject an unknown name
+    /// itself — see SPEC.md.
+    fn validate_type(&self, ty: &Type, span: Span) -> Result<(), TypeError> {
+        match ty {
+            Type::Enum(name) => {
+                if self.enums.contains_key(name) {
+                    Ok(())
+                } else {
+                    Err(TypeError::UnknownType {
+                        name: name.clone(),
+                        span,
+                    })
+                }
+            }
+            Type::List(inner)
+            | Type::Option(inner)
+            | Type::Task(inner)
+            | Type::Inference(inner) => self.validate_type(inner, span),
+            Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => Ok(()),
+        }
+    }
+
     fn check_stmt(&mut self, stmt: &Stmt) -> Result<(), TypeError> {
         match &stmt.kind {
             StmtKind::Let { name, value } => {
@@ -147,6 +194,10 @@ impl TypeChecker {
                     name.clone(),
                     Binding::Function(signature(params, return_type, mode)),
                 );
+                for param in params {
+                    self.validate_type(&param.ty, stmt.span)?;
+                }
+                self.validate_type(return_type, stmt.span)?;
 
                 self.push_scope();
                 for param in params {
@@ -180,6 +231,21 @@ impl TypeChecker {
                     name.clone(),
                     Binding::Function(signature(params, return_type, CallMode::Infer)),
                 );
+                for param in params {
+                    self.validate_type(&param.ty, stmt.span)?;
+                }
+                self.validate_type(return_type, stmt.span)?;
+                Ok(())
+            }
+            StmtKind::Enum { name, variants } => {
+                // Already registered by `check`'s enum pre-pass; this
+                // only adds the one check that pass doesn't do.
+                if variants.is_empty() {
+                    return Err(TypeError::EmptyEnum {
+                        name: name.clone(),
+                        span: stmt.span,
+                    });
+                }
                 Ok(())
             }
             StmtKind::Return(value) => {
@@ -808,5 +874,75 @@ mod tests {
              infer is_positive(text: String) -> Bool"
         )
         .is_ok());
+    }
+
+    // --- enum ----------------------------------------------------------
+
+    #[test]
+    fn accepts_enum_declaration_and_variant_reference() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             let s = Sentiment_Positive\n\
+             print(s == Sentiment_Positive)"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn enum_can_be_used_before_its_declaration() {
+        assert!(check(
+            "fn f() -> Sentiment { return Sentiment_Positive }\n\
+             enum Sentiment { Positive Neutral Negative }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn enum_is_usable_as_a_param_and_return_type() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             fn describe(s: Sentiment) -> Sentiment { return s }\n\
+             print(describe(Sentiment_Positive) == Sentiment_Neutral)"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn infer_can_return_an_enum() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             infer sentiment(text: String) -> Sentiment\n\
+             print(await sentiment(\"great\") == Sentiment_Positive)"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_type_name_as_a_return_type() {
+        let err = check("fn f() -> Frobnicate { return 1 }").unwrap_err();
+        assert!(matches!(err, TypeError::UnknownType { .. }));
+    }
+
+    #[test]
+    fn rejects_unknown_type_name_as_a_param_type() {
+        let err = check("fn f(x: Frobnicate) -> Int { return 1 }").unwrap_err();
+        assert!(matches!(err, TypeError::UnknownType { .. }));
+    }
+
+    #[test]
+    fn rejects_empty_enum() {
+        let err = check("enum Empty { }").unwrap_err();
+        assert!(matches!(err, TypeError::EmptyEnum { .. }));
+    }
+
+    #[test]
+    fn rejects_comparing_two_different_enums() {
+        let err = check(
+            "enum Sentiment { Positive Negative }\n\
+             enum Direction { North South }\n\
+             print(Sentiment_Positive == Direction_North)",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
     }
 }

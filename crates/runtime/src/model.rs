@@ -8,16 +8,23 @@
 
 use std::collections::HashMap;
 
-use aint_ast::Span;
+use aint_ast::{Span, Type};
 
 use crate::error::RuntimeError;
 use crate::value::Value;
 
 /// What the interpreter sends a [`Model`] when an `infer` call is
-/// awaited: which function, and its already-evaluated arguments.
+/// awaited: which function, its already-evaluated arguments, and the
+/// declared return type. `return_type` is the "structured-output
+/// request" half of milestone 09 — a real model adapter (milestone 16)
+/// builds a JSON-schema request from it; `MockModel` ignores it, since
+/// schema validation of *its* response happens generically in the
+/// interpreter afterward, not per-`Model`. See
+/// `docs/milestones/09-typed-structured-inference/SPEC.md`.
 pub struct InferenceRequest {
     pub function: String,
     pub args: Vec<Value>,
+    pub return_type: Type,
     pub span: Span,
 }
 
@@ -88,6 +95,7 @@ mod tests {
             .infer(InferenceRequest {
                 function: "sentiment".to_string(),
                 args: vec![Value::String("great".to_string())],
+                return_type: Type::Bool,
                 span: span(),
             })
             .await;
@@ -101,6 +109,7 @@ mod tests {
             .infer(InferenceRequest {
                 function: "sentiment".to_string(),
                 args: vec![],
+                return_type: Type::Bool,
                 span: span(),
             })
             .await

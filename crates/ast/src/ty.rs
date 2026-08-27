@@ -22,6 +22,11 @@ pub enum Type {
     /// attaches in later milestones. See
     /// `docs/milestones/08-first-ai-primitive/SPEC.md`.
     Inference(Box<Type>),
+    /// A user-declared `enum`, compared nominally by name — the full
+    /// variant list lives in the type checker's/interpreter's own
+    /// registry, not here. See
+    /// `docs/milestones/09-typed-structured-inference/SPEC.md`.
+    Enum(String),
 }
 
 impl fmt::Display for Type {
@@ -36,6 +41,7 @@ impl fmt::Display for Type {
             Type::Option(inner) => write!(f, "Option<{inner}>"),
             Type::Task(inner) => write!(f, "Task<{inner}>"),
             Type::Inference(inner) => write!(f, "Inference<{inner}>"),
+            Type::Enum(name) => write!(f, "{name}"),
         }
     }
 }

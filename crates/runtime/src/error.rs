@@ -48,6 +48,15 @@ pub enum RuntimeError {
         message: String,
         span: Span,
     },
+    /// A [`crate::Model`]'s response didn't match an `infer` call's
+    /// declared return type — e.g. a variant name that isn't one of
+    /// the target `enum`'s. Distinct from `ModelError`: the model
+    /// *did* answer, the answer just doesn't conform. See
+    /// `docs/milestones/09-typed-structured-inference/SPEC.md`.
+    SchemaViolation {
+        message: String,
+        span: Span,
+    },
 }
 
 impl RuntimeError {
@@ -63,7 +72,8 @@ impl RuntimeError {
             | RuntimeError::ReturnOutsideFunction { span }
             | RuntimeError::UnknownModule { span, .. }
             | RuntimeError::IndexOutOfBounds { span, .. }
-            | RuntimeError::ModelError { span, .. } => *span,
+            | RuntimeError::ModelError { span, .. }
+            | RuntimeError::SchemaViolation { span, .. } => *span,
         }
     }
 }
@@ -103,6 +113,9 @@ impl fmt::Display for RuntimeError {
             ),
             RuntimeError::ModelError { message, span } => {
                 write!(f, "{}: model error: {message}", span.start)
+            }
+            RuntimeError::SchemaViolation { message, span } => {
+                write!(f, "{}: schema violation: {message}", span.start)
             }
         }
     }

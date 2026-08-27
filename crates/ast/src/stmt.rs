@@ -42,6 +42,15 @@ pub enum StmtKind {
         params: Vec<Param>,
         return_type: Type,
     },
+    /// `enum Name { Variant1 Variant2 ... }`. Variant values aren't a
+    /// separate AST node — see
+    /// `docs/milestones/09-typed-structured-inference/SPEC.md` for why
+    /// `EnumName_Variant` is plain `ExprKind::Identifier` syntax
+    /// instead.
+    Enum {
+        name: String,
+        variants: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

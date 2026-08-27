@@ -102,6 +102,7 @@ impl Parser {
             TokenKind::Return => self.parse_return_statement(),
             TokenKind::Import => self.parse_import_statement(),
             TokenKind::Infer => self.parse_infer_statement(),
+            TokenKind::Enum => self.parse_enum_statement(),
             _ => self.parse_expr_statement(),
         }
     }
@@ -198,11 +199,13 @@ impl Parser {
     }
 
     /// Parses a type name from an identifier token — `Int`, `Float`,
-    /// `Bool`, `String`, `Unit`, or `List<T>`/`Option<T>` reusing the
-    /// existing `<`/`>` operator tokens for the generic brackets. An
-    /// identifier that isn't one of these is a parse error: see
-    /// docs/milestones/05-core-type-system/SPEC.md for why unknown type
-    /// names are caught here rather than deferred to the type checker.
+    /// `Bool`, `String`, `Unit`, `List<T>`/`Option<T>` reusing the
+    /// existing `<`/`>` operator tokens for the generic brackets, or any
+    /// other identifier as a reference to a user-declared `enum`. The
+    /// parser has no symbol table, so it can't reject an unknown enum
+    /// name here the way it used to reject *any* unrecognized name —
+    /// that's the type checker's job now
+    /// (`docs/milestones/09-typed-structured-inference/SPEC.md`).
     fn parse_type(&mut self) -> Result<(Type, Span), ParseError> {
         let (name, span) = self.expect_identifier()?;
         let ty = match name.as_str() {
@@ -223,14 +226,26 @@ impl Parser {
                 self.expect(TokenKind::Greater, "`>`")?;
                 Type::Option(Box::new(inner))
             }
-            _ => {
-                return Err(ParseError::Unexpected {
-                    expected: "a type".to_string(),
-                    found: Token::new(TokenKind::Identifier(name), span),
-                });
-            }
+            _ => Type::Enum(name),
         };
         Ok((ty, span))
+    }
+
+    /// Parses `enum Name { Variant1 Variant2 ... }` — bare identifiers,
+    /// no separators, same as everywhere else in AINT statements don't
+    /// need them.
+    fn parse_enum_statement(&mut self) -> Result<Stmt, ParseError> {
+        let enum_token = self.expect(TokenKind::Enum, "`enum`")?;
+        let (name, _) = self.expect_identifier()?;
+        self.expect(TokenKind::LeftBrace, "`{`")?;
+        let mut variants = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            let (variant, _) = self.expect_identifier()?;
+            variants.push(variant);
+        }
+        let close = self.expect(TokenKind::RightBrace, "`}`")?;
+        let span = Span::new(enum_token.span.start, close.span.end);
+        Ok(Stmt::new(StmtKind::Enum { name, variants }, span))
     }
 
     fn parse_return_statement(&mut self) -> Result<Stmt, ParseError> {
@@ -765,9 +780,17 @@ mod tests {
     }
 
     #[test]
-    fn errors_on_unknown_type_name() {
-        let err = parse_source("fn f(x: Frobnicate) -> Int { return 1 }").unwrap_err();
-        assert!(matches!(err, ParseError::Unexpected { .. }));
+    fn unknown_type_name_parses_as_a_speculative_enum_reference() {
+        // No symbol table at parse time - see SPEC.md. Whether
+        // `Frobnicate` is a real enum is the type checker's job now;
+        // this only has to parse.
+        let stmt = parse_one_stmt("fn f(x: Frobnicate) -> Int { return 1 }");
+        match stmt.kind {
+            StmtKind::Fn { params, .. } => {
+                assert_eq!(params[0].ty, Type::Enum("Frobnicate".to_string()));
+            }
+            other => panic!("expected Fn, got {other:?}"),
+        }
     }
 
     #[test]
@@ -808,6 +831,38 @@ mod tests {
         match stmt.kind {
             StmtKind::Infer { params, .. } => assert!(params.is_empty()),
             other => panic!("expected Infer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_enum_statement() {
+        let stmt = parse_one_stmt("enum Sentiment { Positive Neutral Negative }");
+        match stmt.kind {
+            StmtKind::Enum { name, variants } => {
+                assert_eq!(name, "Sentiment");
+                assert_eq!(variants, vec!["Positive", "Neutral", "Negative"]);
+            }
+            other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_enum_statement_with_one_variant() {
+        let stmt = parse_one_stmt("enum Unit { Only }");
+        match stmt.kind {
+            StmtKind::Enum { variants, .. } => assert_eq!(variants, vec!["Only"]),
+            other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enum_return_type_and_variant_reference_parse() {
+        let stmt = parse_one_stmt("fn f() -> Sentiment { return Sentiment_Positive }");
+        match stmt.kind {
+            StmtKind::Fn { return_type, .. } => {
+                assert_eq!(return_type, Type::Enum("Sentiment".to_string()));
+            }
+            other => panic!("expected Fn, got {other:?}"),
         }
     }
 

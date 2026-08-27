@@ -1,7 +1,7 @@
 use std::fmt;
 use std::rc::Rc;
 
-use aint_ast::Block;
+use aint_ast::{Block, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -25,6 +25,10 @@ pub enum Value {
     /// run, exactly like [`Value::Task`]. `await` sends it to the
     /// interpreter's `Model`.
     Inference(Rc<PendingInference>),
+    /// A value of a user-declared `enum`: `(enum name, variant name)`.
+    /// Compared with plain `PartialEq`, exactly like every other value
+    /// — see `docs/milestones/09-typed-structured-inference/SPEC.md`.
+    Enum(String, String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -59,22 +63,28 @@ impl Task {
     }
 }
 
-/// An `infer`-declared function: name and parameter names only — there
-/// is no body, and no return type either, since the interpreter never
-/// needs it (the type checker already validated the call site).
+/// An `infer`-declared function: name, parameter names, and its
+/// declared return type. The return type wasn't needed before
+/// milestone 09 (the type checker already validated the call site) —
+/// it's needed now to validate the model's response against it at
+/// `await` time. See
+/// `docs/milestones/09-typed-structured-inference/SPEC.md`.
 #[derive(Debug, PartialEq)]
 pub struct InferenceFn {
     pub name: String,
     pub params: Vec<String>,
+    pub return_type: Type,
 }
 
 /// The deferred computation behind a [`Value::Inference`]: which
-/// `infer` function, and the already-evaluated argument values to
-/// send to the model once awaited.
+/// `infer` function, its already-evaluated argument values, and its
+/// declared return type — all captured at call time, exactly like
+/// `args`, so `await` doesn't need to re-look-up the function.
 #[derive(Debug, PartialEq)]
 pub struct PendingInference {
     pub function: String,
     pub args: Vec<Value>,
+    pub return_type: Type,
 }
 
 /// A function implemented in the runtime itself rather than in AINT
@@ -119,6 +129,11 @@ impl Value {
             Value::Function(_) | Value::Native(_) | Value::InferenceFn(_) => "Function",
             Value::Task(_) => "Task",
             Value::Inference(_) => "Inference",
+            // The specific enum name is dynamic and this method
+            // returns `&'static str`; callers that need it match on
+            // `Value::Enum` directly instead (see e.g.
+            // `Interpreter::validate_inference_result`).
+            Value::Enum(_, _) => "Enum",
         }
     }
 }
@@ -146,6 +161,7 @@ impl fmt::Display for Value {
             Value::Task(task) => write!(f, "<task {}>", task.name()),
             Value::InferenceFn(infer_fn) => write!(f, "<infer fn {}>", infer_fn.name),
             Value::Inference(pending) => write!(f, "<inference {}>", pending.function),
+            Value::Enum(_, variant) => write!(f, "{variant}"),
         }
     }
 }

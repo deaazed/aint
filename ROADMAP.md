@@ -68,7 +68,7 @@ backed by a `Model` trait with a `MockModel` implementation from day
 one — AI-touching code must be testable without a live model from this
 milestone forward.
 
-## 09 — Typed structured inference
+## 09 — Typed structured inference — done
 
 `enum Sentiment { Positive Neutral Negative }` plus
 `infer sentiment(text: String) -> Sentiment`, with the runtime generating

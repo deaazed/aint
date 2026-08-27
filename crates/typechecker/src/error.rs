@@ -50,6 +50,20 @@ pub enum TypeError {
         name: String,
         span: Span,
     },
+    /// A type name that isn't a built-in and doesn't name any declared
+    /// `enum` — see
+    /// `docs/milestones/09-typed-structured-inference/SPEC.md` for why
+    /// this is caught here instead of at parse time.
+    UnknownType {
+        name: String,
+        span: Span,
+    },
+    /// `enum Name { }` — a variant list with nothing in it, so no value
+    /// of this type could ever exist.
+    EmptyEnum {
+        name: String,
+        span: Span,
+    },
 }
 
 impl TypeError {
@@ -65,7 +79,9 @@ impl TypeError {
             | TypeError::ReturnTypeMismatch { span, .. }
             | TypeError::ReturnOutsideFunction { span }
             | TypeError::MissingReturn { span, .. }
-            | TypeError::UnknownModule { span, .. } => *span,
+            | TypeError::UnknownModule { span, .. }
+            | TypeError::UnknownType { span, .. }
+            | TypeError::EmptyEnum { span, .. } => *span,
         }
     }
 }
@@ -128,6 +144,12 @@ impl fmt::Display for TypeError {
             ),
             TypeError::UnknownModule { name, span } => {
                 write!(f, "{}: unknown module `{name}`", span.start)
+            }
+            TypeError::UnknownType { name, span } => {
+                write!(f, "{}: unknown type `{name}`", span.start)
+            }
+            TypeError::EmptyEnum { name, span } => {
+                write!(f, "{}: `enum {name}` has no variants", span.start)
             }
         }
     }

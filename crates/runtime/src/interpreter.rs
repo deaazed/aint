@@ -1,9 +1,10 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::rc::Rc;
 use std::time::Duration;
 
-use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, UnaryOp};
+use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, Type, UnaryOp};
 use async_recursion::async_recursion;
 
 use crate::environment::Environment;
@@ -45,6 +46,11 @@ pub struct Interpreter<W: Write = io::Stdout, M: Model = MockModel> {
     globals: Rc<RefCell<Environment>>,
     output: RefCell<W>,
     model: M,
+    /// Every declared `enum`, by name, to its variant names — populated
+    /// as `StmtKind::Enum` statements execute. Used to validate a
+    /// model's response against the schema an `infer` call declared.
+    /// See `docs/milestones/09-typed-structured-inference/SPEC.md`.
+    enums: RefCell<HashMap<String, Vec<String>>>,
 }
 
 impl Interpreter<io::Stdout, MockModel> {
@@ -75,6 +81,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             globals,
             output: RefCell::new(output),
             model,
+            enums: RefCell::new(HashMap::new()),
         }
     }
 
@@ -145,17 +152,33 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             StmtKind::Infer {
                 name,
                 params,
-                return_type: _,
+                return_type,
             } => {
                 // Same reasoning as `StmtKind::Fn` above: the type
                 // checker already validated this signature, so the
                 // interpreter only needs param names — there's no body
-                // at all, unlike `Fn`.
+                // at all, unlike `Fn`. `return_type` *is* needed now
+                // (milestone 09), to validate the model's response
+                // against it once awaited.
                 let infer_fn = Value::InferenceFn(Rc::new(InferenceFn {
                     name: name.clone(),
                     params: params.iter().map(|p| p.name.clone()).collect(),
+                    return_type: return_type.clone(),
                 }));
                 env.borrow_mut().define(name.clone(), infer_fn);
+                Ok(Flow::Normal)
+            }
+            StmtKind::Enum { name, variants } => {
+                self.enums
+                    .borrow_mut()
+                    .insert(name.clone(), variants.clone());
+                let mut env = env.borrow_mut();
+                for variant in variants {
+                    env.define(
+                        format!("{name}_{variant}"),
+                        Value::Enum(name.clone(), variant.clone()),
+                    );
+                }
                 Ok(Flow::Normal)
             }
             StmtKind::Return(value) => {
@@ -362,6 +385,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 Ok(Value::Inference(Rc::new(PendingInference {
                     function: infer_fn.name.clone(),
                     args,
+                    return_type: infer_fn.return_type.clone(),
                 })))
             }
             other => Err(RuntimeError::NotCallable {
@@ -411,13 +435,67 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         pending: &PendingInference,
         span: Span,
     ) -> Result<Value, RuntimeError> {
-        self.model
+        let value = self
+            .model
             .infer(InferenceRequest {
                 function: pending.function.clone(),
                 args: pending.args.clone(),
+                return_type: pending.return_type.clone(),
                 span,
             })
-            .await
+            .await?;
+        self.validate_inference_result(&value, &pending.return_type, span)?;
+        Ok(value)
+    }
+
+    /// Checks a model's response against an `infer` call's declared
+    /// return type before it becomes a usable AINT value — the
+    /// "validating the response against the schema" half of milestone
+    /// 09. Only `Enum` return types are checked: a `Bool`/`Int`/etc.
+    /// mismatch already gets caught wherever the value is next used
+    /// (`if` requires a real `Bool`, and so on), but nothing else would
+    /// ever catch a model returning an unlisted enum variant — it would
+    /// just compare unequal to every real one, silently. See SPEC.md.
+    fn validate_inference_result(
+        &self,
+        value: &Value,
+        expected: &Type,
+        span: Span,
+    ) -> Result<(), RuntimeError> {
+        let Type::Enum(expected_name) = expected else {
+            return Ok(());
+        };
+        match value {
+            Value::Enum(name, variant) if name == expected_name => {
+                let known_enums = self.enums.borrow();
+                let variants = known_enums.get(expected_name).expect(
+                    "an infer call's return type was already validated by the type checker",
+                );
+                if variants.contains(variant) {
+                    Ok(())
+                } else {
+                    Err(RuntimeError::SchemaViolation {
+                        message: format!(
+                            "model returned `{variant}`, which is not a variant of `{expected_name}`"
+                        ),
+                        span,
+                    })
+                }
+            }
+            Value::Enum(name, _) => Err(RuntimeError::SchemaViolation {
+                message: format!(
+                    "model returned a value of enum `{name}`, expected `{expected_name}`"
+                ),
+                span,
+            }),
+            other => Err(RuntimeError::SchemaViolation {
+                message: format!(
+                    "model returned a {}, expected the enum `{expected_name}`",
+                    other.type_name()
+                ),
+                span,
+            }),
+        }
     }
 
     async fn run_async_native(
@@ -928,5 +1006,105 @@ mod tests {
              await greeting()",
         );
         assert!(matches!(err, RuntimeError::ModelError { .. }));
+    }
+
+    // --- enum / schema validation ------------------------------------
+
+    #[test]
+    fn enum_variants_construct_and_compare() {
+        assert_eq!(
+            run_capturing(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 print(Sentiment_Positive == Sentiment_Positive)\n\
+                 print(Sentiment_Positive == Sentiment_Negative)\n\
+                 print(Sentiment_Positive)"
+            ),
+            "true\nfalse\nPositive\n"
+        );
+    }
+
+    #[test]
+    fn enum_value_flows_through_a_function() {
+        assert_eq!(
+            run_capturing(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 fn describe(s: Sentiment) -> Sentiment { return s }\n\
+                 print(describe(Sentiment_Positive) == Sentiment_Positive)"
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn infer_returning_an_enum_with_a_valid_mocked_variant_succeeds() {
+        assert_eq!(
+            run_capturing_with_model(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 infer sentiment(text: String) -> Sentiment\n\
+                 print(await sentiment(\"great\") == Sentiment_Positive)",
+                || {
+                    crate::model::MockModel::new().mock(
+                        "sentiment",
+                        Value::Enum("Sentiment".to_string(), "Positive".to_string()),
+                    )
+                },
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn infer_returning_a_hallucinated_variant_is_a_schema_violation() {
+        // The model answered - it just invented a variant that was
+        // never declared. This must not silently compare `false`
+        // against every real variant; it has to be a loud, specific
+        // error.
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 infer sentiment(text: String) -> Sentiment\n\
+                 print(await sentiment(\"great\"))",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock(
+                "sentiment",
+                Value::Enum("Sentiment".to_string(), "Ecstatic".to_string()),
+            );
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    #[test]
+    fn infer_returning_the_wrong_enum_entirely_is_a_schema_violation() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 enum Direction { North South }\n\
+                 infer sentiment(text: String) -> Sentiment\n\
+                 print(await sentiment(\"great\"))",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock(
+                "sentiment",
+                Value::Enum("Direction".to_string(), "North".to_string()),
+            );
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
     }
 }
