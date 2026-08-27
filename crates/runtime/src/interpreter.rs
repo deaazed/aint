@@ -462,15 +462,51 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         expected: &Type,
         span: Span,
     ) -> Result<(), RuntimeError> {
-        let Type::Enum(expected_name) = expected else {
-            return Ok(());
-        };
+        match expected {
+            Type::Enum(expected_name) => self.validate_enum_result(value, expected_name, span),
+            Type::Distribution(inner) => match inner.as_ref() {
+                Type::Enum(expected_name) => {
+                    self.validate_distribution_result(value, expected_name, span)
+                }
+                // The type checker restricts `Distribution<T>` to enum
+                // `T` (see SPEC.md); a program that reaches here without
+                // having gone through it (e.g. a runtime-only test)
+                // gets a clear error instead of a panic.
+                _ => Err(RuntimeError::SchemaViolation {
+                    message: "Distribution<T> requires T to be an enum".to_string(),
+                    span,
+                }),
+            },
+            _ => Ok(()),
+        }
+    }
+
+    /// The variants a declared enum actually has, or a `SchemaViolation`
+    /// if nothing registered that name — reachable if an `infer`
+    /// function names an enum that either doesn't exist or was never
+    /// executed (both normally caught earlier by the type checker, but
+    /// this interpreter doesn't assume it always ran first; see
+    /// `docs/milestones/10-uncertainty/SPEC.md`).
+    fn known_variants(&self, enum_name: &str, span: Span) -> Result<Vec<String>, RuntimeError> {
+        self.enums
+            .borrow()
+            .get(enum_name)
+            .cloned()
+            .ok_or_else(|| RuntimeError::SchemaViolation {
+                message: format!("no enum named `{enum_name}` is declared"),
+                span,
+            })
+    }
+
+    fn validate_enum_result(
+        &self,
+        value: &Value,
+        expected_name: &str,
+        span: Span,
+    ) -> Result<(), RuntimeError> {
         match value {
             Value::Enum(name, variant) if name == expected_name => {
-                let known_enums = self.enums.borrow();
-                let variants = known_enums.get(expected_name).expect(
-                    "an infer call's return type was already validated by the type checker",
-                );
+                let variants = self.known_variants(expected_name, span)?;
                 if variants.contains(variant) {
                     Ok(())
                 } else {
@@ -496,6 +532,70 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 span,
             }),
         }
+    }
+
+    /// Checks a `Distribution<Enum>` response: right enum, every listed
+    /// variant real, every probability in `[0.0, 1.0]`, and the whole
+    /// distribution summing to `1.0` within `1e-6`. This is the
+    /// entirety of what AINT validates about "probability" — see
+    /// `docs/milestones/10-uncertainty/SPEC.md`'s explicit decision on
+    /// what it deliberately does *not* claim to validate.
+    fn validate_distribution_result(
+        &self,
+        value: &Value,
+        expected_name: &str,
+        span: Span,
+    ) -> Result<(), RuntimeError> {
+        let (name, entries) = match value {
+            Value::Distribution(name, entries) if name == expected_name => (name, entries),
+            Value::Distribution(name, _) => {
+                return Err(RuntimeError::SchemaViolation {
+                    message: format!(
+                        "model returned a distribution over `{name}`, expected `{expected_name}`"
+                    ),
+                    span,
+                });
+            }
+            other => {
+                return Err(RuntimeError::SchemaViolation {
+                    message: format!(
+                        "model returned a {}, expected a Distribution over `{expected_name}`",
+                        other.type_name()
+                    ),
+                    span,
+                });
+            }
+        };
+
+        let variants = self.known_variants(name, span)?;
+        for (variant, probability) in entries {
+            if !variants.contains(variant) {
+                return Err(RuntimeError::SchemaViolation {
+                    message: format!(
+                        "distribution lists `{variant}`, which is not a variant of `{expected_name}`"
+                    ),
+                    span,
+                });
+            }
+            if !(0.0..=1.0).contains(probability) {
+                return Err(RuntimeError::SchemaViolation {
+                    message: format!(
+                        "distribution assigns `{variant}` an invalid probability {probability}"
+                    ),
+                    span,
+                });
+            }
+        }
+
+        let total: f64 = entries.iter().map(|(_, p)| p).sum();
+        if (total - 1.0).abs() > 1e-6 {
+            return Err(RuntimeError::SchemaViolation {
+                message: format!("distribution's probabilities sum to {total}, expected 1.0"),
+                span,
+            });
+        }
+
+        Ok(())
     }
 
     async fn run_async_native(
@@ -1095,6 +1195,227 @@ mod tests {
             let model = crate::model::MockModel::new().mock(
                 "sentiment",
                 Value::Enum("Direction".to_string(), "North".to_string()),
+            );
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    // --- Distribution<T> / Option<T> -----------------------------------
+
+    fn sentiment_distribution(entries: Vec<(&str, f64)>) -> Value {
+        Value::Distribution(
+            "Sentiment".to_string(),
+            entries
+                .into_iter()
+                .map(|(v, p)| (v.to_string(), p))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn distribution_argmax_probability_and_entropy() {
+        assert_eq!(
+            run_capturing_with_model(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 import distribution\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 let d = await classify(\"great\")\n\
+                 print(distribution_argmax(d) == Sentiment_Positive)\n\
+                 print(distribution_probability(d, Sentiment_Positive))\n\
+                 print(distribution_probability(d, Sentiment_Negative))\n\
+                 print(distribution_entropy(d) > 0.0)",
+                || {
+                    crate::model::MockModel::new().mock(
+                        "classify",
+                        sentiment_distribution(vec![
+                            ("Positive", 0.7),
+                            ("Neutral", 0.2),
+                            ("Negative", 0.1),
+                        ]),
+                    )
+                },
+            ),
+            "true\n0.7\n0.1\ntrue\n"
+        );
+    }
+
+    #[test]
+    fn distribution_sample_is_deterministic_for_a_degenerate_distribution() {
+        assert_eq!(
+            run_capturing_with_model(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 import distribution\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 let d = await classify(\"great\")\n\
+                 print(distribution_sample(d) == Sentiment_Positive)",
+                || {
+                    crate::model::MockModel::new().mock(
+                        "classify",
+                        sentiment_distribution(vec![
+                            ("Positive", 1.0),
+                            ("Neutral", 0.0),
+                            ("Negative", 0.0),
+                        ]),
+                    )
+                },
+            ),
+            "true\n"
+        );
+    }
+
+    #[test]
+    fn require_confidence_above_threshold_is_some_of_the_argmax() {
+        assert_eq!(
+            run_capturing_with_model(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 import distribution\n\
+                 import option\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 let d = await classify(\"great\")\n\
+                 let result = distribution_require_confidence(d, 0.5)\n\
+                 print(option_is_some(result))\n\
+                 print(option_unwrap(result) == Sentiment_Positive)",
+                || {
+                    crate::model::MockModel::new().mock(
+                        "classify",
+                        sentiment_distribution(vec![
+                            ("Positive", 0.7),
+                            ("Neutral", 0.2),
+                            ("Negative", 0.1),
+                        ]),
+                    )
+                },
+            ),
+            "true\ntrue\n"
+        );
+    }
+
+    #[test]
+    fn require_confidence_below_threshold_is_none() {
+        assert_eq!(
+            run_capturing_with_model(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 import distribution\n\
+                 import option\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 let d = await classify(\"meh\")\n\
+                 print(option_is_some(distribution_require_confidence(d, 0.9)))",
+                || {
+                    crate::model::MockModel::new().mock(
+                        "classify",
+                        sentiment_distribution(vec![
+                            ("Positive", 0.7),
+                            ("Neutral", 0.2),
+                            ("Negative", 0.1),
+                        ]),
+                    )
+                },
+            ),
+            "false\n"
+        );
+    }
+
+    #[test]
+    fn option_unwrap_on_none_is_a_clear_error_not_a_panic() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 import distribution\n\
+                 import option\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 let d = await classify(\"meh\")\n\
+                 print(option_unwrap(distribution_require_confidence(d, 0.99)))",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock(
+                "classify",
+                sentiment_distribution(vec![
+                    ("Positive", 0.7),
+                    ("Neutral", 0.2),
+                    ("Negative", 0.1),
+                ]),
+            );
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn distribution_with_an_unlisted_variant_is_a_schema_violation() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 await classify(\"x\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new()
+                .mock("classify", sentiment_distribution(vec![("Ecstatic", 1.0)]));
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    #[test]
+    fn distribution_not_summing_to_one_is_a_schema_violation() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 await classify(\"x\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock(
+                "classify",
+                sentiment_distribution(vec![("Positive", 0.5), ("Neutral", 0.2)]),
+            );
+            let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build a test runtime");
+            runtime
+                .block_on(interpreter.run(&program))
+                .expect_err("should produce a runtime error")
+        });
+        assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    #[test]
+    fn distribution_over_the_wrong_enum_is_a_schema_violation() {
+        let err = run_on_big_stack(move || {
+            let program = aint_parser::parse_source(
+                "enum Sentiment { Positive Neutral Negative }\n\
+                 enum Direction { North South }\n\
+                 infer classify(text: String) -> Distribution<Sentiment>\n\
+                 await classify(\"x\")",
+            )
+            .expect("should parse");
+            let model = crate::model::MockModel::new().mock(
+                "classify",
+                Value::Distribution("Direction".to_string(), vec![("North".to_string(), 1.0)]),
             );
             let interpreter = Interpreter::with_output_and_model(Vec::new(), model);
             let runtime = tokio::runtime::Builder::new_current_thread()

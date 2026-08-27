@@ -75,7 +75,7 @@ milestone forward.
 a structured-output request and validating the response against the
 schema before it becomes an AINT value.
 
-## 10 — Uncertainty
+## 10 — Uncertainty — done
 
 `Distribution<T>` with `probability()`, `argmax()`, `entropy()`,
 `sample()`, `require_confidence()`. Decide, explicitly and in writing,

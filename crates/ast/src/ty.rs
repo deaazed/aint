@@ -27,6 +27,11 @@ pub enum Type {
     /// registry, not here. See
     /// `docs/milestones/09-typed-structured-inference/SPEC.md`.
     Enum(String),
+    /// A probability distribution over an `enum`'s variants — only
+    /// ever over `Type::Enum`, enforced by the type checker, not here.
+    /// See `docs/milestones/10-uncertainty/SPEC.md` for the explicit
+    /// decision on what "probability" means.
+    Distribution(Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -42,6 +47,7 @@ impl fmt::Display for Type {
             Type::Task(inner) => write!(f, "Task<{inner}>"),
             Type::Inference(inner) => write!(f, "Inference<{inner}>"),
             Type::Enum(name) => write!(f, "{name}"),
+            Type::Distribution(inner) => write!(f, "Distribution<{inner}>"),
         }
     }
 }

@@ -29,6 +29,17 @@ pub enum Value {
     /// Compared with plain `PartialEq`, exactly like every other value
     /// — see `docs/milestones/09-typed-structured-inference/SPEC.md`.
     Enum(String, String),
+    /// A probability distribution over an enum's variants:
+    /// `(enum name, [(variant name, probability), ...])`. Only ever
+    /// produced by a validated `infer` response — see
+    /// `docs/milestones/10-uncertainty/SPEC.md` for the structural
+    /// guarantees the runtime enforces (and doesn't) on the
+    /// probabilities.
+    Distribution(String, Vec<(String, f64)>),
+    /// `Option<T>`'s first real value — previously type-only. Reuses
+    /// Rust's own `Option` for the Some/None shape rather than
+    /// inventing parallel variants.
+    Option(Option<Box<Value>>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -115,6 +126,15 @@ pub enum NativeFunction {
     /// see SPEC.md for why one real async primitive matters here.
     TimeSleepMs,
     CollectionsLength,
+    DistributionProbability,
+    DistributionArgmax,
+    DistributionEntropy,
+    /// Genuinely random (milestone 10) — see
+    /// `docs/milestones/10-uncertainty/SPEC.md` for why that's fine.
+    DistributionSample,
+    DistributionRequireConfidence,
+    OptionIsSome,
+    OptionUnwrap,
 }
 
 impl Value {
@@ -134,6 +154,8 @@ impl Value {
             // `Value::Enum` directly instead (see e.g.
             // `Interpreter::validate_inference_result`).
             Value::Enum(_, _) => "Enum",
+            Value::Distribution(_, _) => "Distribution",
+            Value::Option(_) => "Option",
         }
     }
 }
@@ -162,6 +184,18 @@ impl fmt::Display for Value {
             Value::InferenceFn(infer_fn) => write!(f, "<infer fn {}>", infer_fn.name),
             Value::Inference(pending) => write!(f, "<inference {}>", pending.function),
             Value::Enum(_, variant) => write!(f, "{variant}"),
+            Value::Distribution(name, entries) => {
+                write!(f, "Distribution<{name}>{{")?;
+                for (i, (variant, probability)) in entries.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{variant}: {probability}")?;
+                }
+                write!(f, "}}")
+            }
+            Value::Option(Some(inner)) => write!(f, "Some({inner})"),
+            Value::Option(None) => write!(f, "None"),
         }
     }
 }
@@ -187,6 +221,13 @@ impl NativeFunction {
             NativeFunction::TimeNowSeconds => "time_now_seconds",
             NativeFunction::TimeSleepMs => "time_sleep_ms",
             NativeFunction::CollectionsLength => "collections_length",
+            NativeFunction::DistributionProbability => "distribution_probability",
+            NativeFunction::DistributionArgmax => "distribution_argmax",
+            NativeFunction::DistributionEntropy => "distribution_entropy",
+            NativeFunction::DistributionSample => "distribution_sample",
+            NativeFunction::DistributionRequireConfidence => "distribution_require_confidence",
+            NativeFunction::OptionIsSome => "option_is_some",
+            NativeFunction::OptionUnwrap => "option_unwrap",
         }
     }
 

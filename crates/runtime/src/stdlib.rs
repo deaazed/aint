@@ -48,6 +48,23 @@ pub(crate) fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeF
             "collections_length",
             NativeFunction::CollectionsLength,
         )]),
+        "distribution" => Some(vec![
+            (
+                "distribution_probability",
+                NativeFunction::DistributionProbability,
+            ),
+            ("distribution_argmax", NativeFunction::DistributionArgmax),
+            ("distribution_entropy", NativeFunction::DistributionEntropy),
+            ("distribution_sample", NativeFunction::DistributionSample),
+            (
+                "distribution_require_confidence",
+                NativeFunction::DistributionRequireConfidence,
+            ),
+        ]),
+        "option" => Some(vec![
+            ("option_is_some", NativeFunction::OptionIsSome),
+            ("option_unwrap", NativeFunction::OptionUnwrap),
+        ]),
         _ => None,
     }
 }
@@ -147,7 +164,132 @@ pub(crate) fn call(
                 }),
             }
         }
+        NativeFunction::DistributionProbability => {
+            let [dist, value] = two(native, args, span)?;
+            let (_, entries) = distribution(dist, span)?;
+            let variant = enum_variant(&value, span)?;
+            let probability = entries
+                .iter()
+                .find(|(v, _)| v == variant)
+                .map_or(0.0, |(_, p)| *p);
+            Ok(Value::Float(probability))
+        }
+        NativeFunction::DistributionArgmax => {
+            let [dist] = one(native, args, span)?;
+            let (name, entries) = distribution(dist, span)?;
+            let (variant, _) = argmax_entry(&entries, span)?;
+            Ok(Value::Enum(name, variant.clone()))
+        }
+        NativeFunction::DistributionEntropy => {
+            let [dist] = one(native, args, span)?;
+            let (_, entries) = distribution(dist, span)?;
+            let entropy = -entries
+                .iter()
+                .map(|(_, p)| if *p > 0.0 { p * p.log2() } else { 0.0 })
+                .sum::<f64>();
+            Ok(Value::Float(entropy))
+        }
+        NativeFunction::DistributionSample => {
+            let [dist] = one(native, args, span)?;
+            let (name, entries) = distribution(dist, span)?;
+            let roll: f64 = rand::random();
+            let mut cumulative = 0.0;
+            let mut chosen = entries.last().map(|(v, _)| v.clone());
+            for (variant, probability) in &entries {
+                cumulative += probability;
+                if roll < cumulative {
+                    chosen = Some(variant.clone());
+                    break;
+                }
+            }
+            let variant = chosen.ok_or_else(|| RuntimeError::TypeMismatch {
+                message: "distribution has no entries to sample from".to_string(),
+                span,
+            })?;
+            Ok(Value::Enum(name, variant))
+        }
+        NativeFunction::DistributionRequireConfidence => {
+            let [dist, threshold] = two(native, args, span)?;
+            let (name, entries) = distribution(dist, span)?;
+            let threshold = float(threshold, span)?;
+            let (variant, probability) = argmax_entry(&entries, span)?;
+            if *probability >= threshold {
+                Ok(Value::Option(Some(Box::new(Value::Enum(
+                    name,
+                    variant.clone(),
+                )))))
+            } else {
+                Ok(Value::Option(None))
+            }
+        }
+        NativeFunction::OptionIsSome => {
+            let [opt] = one(native, args, span)?;
+            match opt {
+                Value::Option(inner) => Ok(Value::Bool(inner.is_some())),
+                other => Err(RuntimeError::TypeMismatch {
+                    message: format!(
+                        "option_is_some expects an Option, found {}",
+                        other.type_name()
+                    ),
+                    span,
+                }),
+            }
+        }
+        NativeFunction::OptionUnwrap => {
+            let [opt] = one(native, args, span)?;
+            match opt {
+                Value::Option(Some(inner)) => Ok(*inner),
+                Value::Option(None) => Err(RuntimeError::TypeMismatch {
+                    message: "option_unwrap called on None".to_string(),
+                    span,
+                }),
+                other => Err(RuntimeError::TypeMismatch {
+                    message: format!(
+                        "option_unwrap expects an Option, found {}",
+                        other.type_name()
+                    ),
+                    span,
+                }),
+            }
+        }
     }
+}
+
+fn distribution(value: Value, span: Span) -> Result<(String, Vec<(String, f64)>), RuntimeError> {
+    match value {
+        Value::Distribution(name, entries) => Ok((name, entries)),
+        other => Err(RuntimeError::TypeMismatch {
+            message: format!("expected a Distribution, found {}", other.type_name()),
+            span,
+        }),
+    }
+}
+
+fn enum_variant(value: &Value, span: Span) -> Result<&str, RuntimeError> {
+    match value {
+        Value::Enum(_, variant) => Ok(variant),
+        other => Err(RuntimeError::TypeMismatch {
+            message: format!("expected an enum value, found {}", other.type_name()),
+            span,
+        }),
+    }
+}
+
+/// The first entry with the strictly-highest probability — ties keep
+/// whichever entry came first, a deterministic, documented choice
+/// rather than an accident of iteration order.
+fn argmax_entry(entries: &[(String, f64)], span: Span) -> Result<&(String, f64), RuntimeError> {
+    entries
+        .iter()
+        .fold(None, |best, entry| match best {
+            None => Some(entry),
+            Some(current_best) if entry.1 > current_best.1 => Some(entry),
+            Some(current_best) => Some(current_best),
+        })
+        .ok_or_else(|| RuntimeError::TypeMismatch {
+            message: "distribution has no entries".to_string(),
+            span,
+        })
 }
 
 fn zero(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<[Value; 0], RuntimeError> {

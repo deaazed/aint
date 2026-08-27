@@ -17,6 +17,9 @@ tokio = { version = "1", features = ["full"] }
 # `Rc`/`RefCell` throughout and is never spawned onto another thread —
 # see docs/milestones/07-async-concurrency/SPEC.md.
 async-recursion = "1"
+# Backs `distribution_sample` only (milestone 10) — a weighted random
+# draw over a Distribution<T>'s reported probabilities.
+rand = "0.8"
 
 [dev-dependencies]
 # Only for tests: makes it possible to write test programs as AINT

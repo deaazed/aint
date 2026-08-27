@@ -12,6 +12,29 @@ enum Binding {
     /// `collections_length`: the one stdlib function genuinely
     /// polymorphic over `List<T>`. See `stdlib.rs`'s doc comment.
     PolymorphicListFunction,
+    /// `distribution_*`: five functions genuinely polymorphic over
+    /// `Distribution<T>`'s `T`. Same shape as
+    /// `PolymorphicListFunction`, one per `stdlib.rs` module, see
+    /// `docs/milestones/10-uncertainty/SPEC.md`.
+    PolymorphicDistributionFunction(DistributionOp),
+    /// `option_*`: two functions genuinely polymorphic over
+    /// `Option<T>`'s `T`.
+    PolymorphicOptionFunction(OptionOp),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DistributionOp {
+    Probability,
+    Argmax,
+    Entropy,
+    Sample,
+    RequireConfidence,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OptionOp {
+    IsSome,
+    Unwrap,
 }
 
 #[derive(Debug, Clone)]
@@ -163,6 +186,15 @@ impl TypeChecker {
             | Type::Option(inner)
             | Type::Task(inner)
             | Type::Inference(inner) => self.validate_type(inner, span),
+            Type::Distribution(inner) => match inner.as_ref() {
+                Type::Enum(_) => self.validate_type(inner, span),
+                other => Err(TypeError::Mismatch {
+                    message: format!(
+                        "Distribution<T> requires T to be an enum, found Distribution<{other}>"
+                    ),
+                    span,
+                }),
+            },
             Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => Ok(()),
         }
     }
@@ -294,6 +326,33 @@ impl TypeChecker {
                     );
                     return Ok(());
                 }
+                if module == "distribution" {
+                    for (name, op) in [
+                        ("distribution_probability", DistributionOp::Probability),
+                        ("distribution_argmax", DistributionOp::Argmax),
+                        ("distribution_entropy", DistributionOp::Entropy),
+                        ("distribution_sample", DistributionOp::Sample),
+                        (
+                            "distribution_require_confidence",
+                            DistributionOp::RequireConfidence,
+                        ),
+                    ] {
+                        self.define(
+                            name.to_string(),
+                            Binding::PolymorphicDistributionFunction(op),
+                        );
+                    }
+                    return Ok(());
+                }
+                if module == "option" {
+                    for (name, op) in [
+                        ("option_is_some", OptionOp::IsSome),
+                        ("option_unwrap", OptionOp::Unwrap),
+                    ] {
+                        self.define(name.to_string(), Binding::PolymorphicOptionFunction(op));
+                    }
+                    return Ok(());
+                }
                 match stdlib::module_functions(module) {
                     Some(functions) => {
                         for (name, sig) in functions {
@@ -337,12 +396,15 @@ impl TypeChecker {
             ExprKind::Bool(_) => Ok(Type::Bool),
             ExprKind::Identifier(name) => match self.lookup(name) {
                 Some(Binding::Variable(ty)) => Ok(ty.clone()),
-                Some(Binding::Function(_) | Binding::PolymorphicListFunction) => {
-                    Err(TypeError::Mismatch {
-                        message: format!("`{name}` is a function; call it with `{name}(...)`"),
-                        span: expr.span,
-                    })
-                }
+                Some(
+                    Binding::Function(_)
+                    | Binding::PolymorphicListFunction
+                    | Binding::PolymorphicDistributionFunction(_)
+                    | Binding::PolymorphicOptionFunction(_),
+                ) => Err(TypeError::Mismatch {
+                    message: format!("`{name}` is a function; call it with `{name}(...)`"),
+                    span: expr.span,
+                }),
                 None => Err(TypeError::UndefinedVariable {
                     name: name.clone(),
                     span: expr.span,
@@ -466,6 +528,16 @@ impl TypeChecker {
                     }),
                 };
             }
+            Some(Binding::PolymorphicDistributionFunction(op)) => {
+                let op = *op;
+                let name = name.clone();
+                return self.check_distribution_call(&name, op, args, span);
+            }
+            Some(Binding::PolymorphicOptionFunction(op)) => {
+                let op = *op;
+                let name = name.clone();
+                return self.check_option_call(&name, op, args, span);
+            }
             Some(Binding::Variable(_)) => {
                 return Err(TypeError::NotAFunction {
                     name: name.clone(),
@@ -506,6 +578,101 @@ impl TypeChecker {
             CallMode::Sync => Ok(sig.return_type),
             CallMode::Async => Ok(Type::Task(Box::new(sig.return_type))),
             CallMode::Infer => Ok(Type::Inference(Box::new(sig.return_type))),
+        }
+    }
+
+    /// Type-checks a call to one of the five `distribution_*`
+    /// functions — polymorphic over `Distribution<T>`'s `T`, same
+    /// shape as `PolymorphicListFunction`'s handling in `check_call`.
+    fn check_distribution_call(
+        &mut self,
+        name: &str,
+        op: DistributionOp,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        let expected_arity = match op {
+            DistributionOp::Argmax | DistributionOp::Entropy | DistributionOp::Sample => 1,
+            DistributionOp::Probability | DistributionOp::RequireConfidence => 2,
+        };
+        if args.len() != expected_arity {
+            return Err(TypeError::ArityMismatch {
+                name: name.to_string(),
+                expected: expected_arity,
+                found: args.len(),
+                span,
+            });
+        }
+
+        let dist_ty = self.check_expr(&args[0])?;
+        let inner = match dist_ty {
+            Type::Distribution(inner) => *inner,
+            other => {
+                return Err(TypeError::Mismatch {
+                    message: format!("`{name}` expects a Distribution, found {other}"),
+                    span: args[0].span,
+                });
+            }
+        };
+
+        match op {
+            DistributionOp::Argmax | DistributionOp::Sample => Ok(inner),
+            DistributionOp::Entropy => Ok(Type::Float),
+            DistributionOp::Probability => {
+                let value_ty = self.check_expr(&args[1])?;
+                if value_ty != inner {
+                    return Err(TypeError::Mismatch {
+                        message: format!("`{name}` expects a {inner}, found {value_ty}"),
+                        span: args[1].span,
+                    });
+                }
+                Ok(Type::Float)
+            }
+            DistributionOp::RequireConfidence => {
+                let threshold_ty = self.check_expr(&args[1])?;
+                if threshold_ty != Type::Float {
+                    return Err(TypeError::Mismatch {
+                        message: format!(
+                            "`{name}` expects a Float threshold, found {threshold_ty}"
+                        ),
+                        span: args[1].span,
+                    });
+                }
+                Ok(Type::Option(Box::new(inner)))
+            }
+        }
+    }
+
+    /// Type-checks a call to `option_is_some`/`option_unwrap` —
+    /// polymorphic over `Option<T>`'s `T`.
+    fn check_option_call(
+        &mut self,
+        name: &str,
+        op: OptionOp,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        if args.len() != 1 {
+            return Err(TypeError::ArityMismatch {
+                name: name.to_string(),
+                expected: 1,
+                found: args.len(),
+                span,
+            });
+        }
+        let arg_ty = self.check_expr(&args[0])?;
+        let inner = match arg_ty {
+            Type::Option(inner) => *inner,
+            other => {
+                return Err(TypeError::Mismatch {
+                    message: format!("`{name}` expects an Option, found {other}"),
+                    span: args[0].span,
+                });
+            }
+        };
+        match op {
+            OptionOp::IsSome => Ok(Type::Bool),
+            OptionOp::Unwrap => Ok(inner),
         }
     }
 }
@@ -944,5 +1111,104 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    // --- Distribution<T> / Option<T> ------------------------------------
+
+    #[test]
+    fn distribution_type_over_an_enum_is_accepted_as_a_return_type() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             infer classify(text: String) -> Distribution<Sentiment>"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn distribution_over_a_non_enum_is_a_type_error() {
+        let err = check("fn f(d: Distribution<Int>) -> Int { return 1 }").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn distribution_argmax_and_sample_return_the_enum_type() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             import distribution\n\
+             fn f(d: Distribution<Sentiment>) -> Sentiment {\n\
+                 return distribution_argmax(d)\n\
+             }\n\
+             fn g(d: Distribution<Sentiment>) -> Sentiment {\n\
+                 return distribution_sample(d)\n\
+             }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn distribution_entropy_returns_float_regardless_of_element_type() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             import distribution\n\
+             fn f(d: Distribution<Sentiment>) -> Float { return distribution_entropy(d) }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn distribution_probability_checks_the_value_type() {
+        let err = check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             enum Direction { North South }\n\
+             import distribution\n\
+             fn f(d: Distribution<Sentiment>) -> Float {\n\
+                 return distribution_probability(d, Direction_North)\n\
+             }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn distribution_require_confidence_returns_option_of_the_enum() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             import distribution\n\
+             import option\n\
+             fn f(d: Distribution<Sentiment>) -> Bool {\n\
+                 let result = distribution_require_confidence(d, 0.8)\n\
+                 return option_is_some(result)\n\
+             }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn option_unwrap_returns_the_inner_type() {
+        assert!(check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             import distribution\n\
+             import option\n\
+             fn f(d: Distribution<Sentiment>) -> Sentiment {\n\
+                 return option_unwrap(distribution_require_confidence(d, 0.8))\n\
+             }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn option_unwrap_on_a_non_option_is_a_type_error() {
+        let err = check("import option\nprint(option_unwrap(1))").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn distribution_functions_undefined_before_import() {
+        let err = check(
+            "enum Sentiment { Positive Neutral Negative }\n\
+             fn f(d: Distribution<Sentiment>) -> Sentiment { return distribution_argmax(d) }",
+        )
+        .unwrap_err();
+        assert!(matches!(err, TypeError::UndefinedFunction { .. }));
     }
 }

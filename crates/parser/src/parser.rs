@@ -226,6 +226,12 @@ impl Parser {
                 self.expect(TokenKind::Greater, "`>`")?;
                 Type::Option(Box::new(inner))
             }
+            "Distribution" => {
+                self.expect(TokenKind::Less, "`<`")?;
+                let (inner, _) = self.parse_type()?;
+                self.expect(TokenKind::Greater, "`>`")?;
+                Type::Distribution(Box::new(inner))
+            }
             _ => Type::Enum(name),
         };
         Ok((ty, span))
@@ -852,6 +858,20 @@ mod tests {
         match stmt.kind {
             StmtKind::Enum { variants, .. } => assert_eq!(variants, vec!["Only"]),
             other => panic!("expected Enum, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_distribution_type() {
+        let stmt = parse_one_stmt("infer classify(text: String) -> Distribution<Sentiment>");
+        match stmt.kind {
+            StmtKind::Infer { return_type, .. } => {
+                assert_eq!(
+                    return_type,
+                    Type::Distribution(Box::new(Type::Enum("Sentiment".to_string())))
+                );
+            }
+            other => panic!("expected Infer, got {other:?}"),
         }
     }
 
