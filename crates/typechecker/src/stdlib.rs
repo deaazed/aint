@@ -55,6 +55,58 @@ pub(crate) fn module_functions(module: &str) -> Option<Vec<(&'static str, Signat
             async_sig("time_sleep_ms", vec![Type::Int], Type::Unit),
         ]),
         // "collections" intentionally omitted - see the doc comment above.
+        "json" => Some(vec![
+            sig(
+                "json_get",
+                vec![Type::String, Type::String],
+                Type::Option(Box::new(Type::String)),
+            ),
+            sig(
+                "json_object",
+                vec![
+                    Type::List(Box::new(Type::String)),
+                    Type::List(Box::new(Type::String)),
+                ],
+                Type::String,
+            ),
+        ]),
+        "db" => Some(vec![
+            sig(
+                "db_insert",
+                vec![Type::String, Type::String, Type::String],
+                Type::Bool,
+            ),
+            sig(
+                "db_get",
+                vec![Type::String, Type::String],
+                Type::Option(Box::new(Type::String)),
+            ),
+            sig(
+                "db_list",
+                vec![Type::String],
+                Type::List(Box::new(Type::String)),
+            ),
+            sig(
+                "db_update",
+                vec![Type::String, Type::String, Type::String],
+                Type::Bool,
+            ),
+            sig("db_delete", vec![Type::String, Type::String], Type::Bool),
+        ]),
+        "auth" => Some(vec![
+            sig("auth_hash_password", vec![Type::String], Type::String),
+            sig(
+                "auth_verify_password",
+                vec![Type::String, Type::String],
+                Type::Bool,
+            ),
+            sig("auth_generate_token", vec![], Type::String),
+        ]),
+        "log" => Some(vec![
+            sig("log_info", vec![Type::String], Type::Unit),
+            sig("log_error", vec![Type::String], Type::Unit),
+        ]),
+        "http" => Some(vec![async_sig("http_serve", vec![Type::Int], Type::Unit)]),
         _ => None,
     }
 }

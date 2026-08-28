@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind, Type, UnaryOp};
 use async_recursion::async_recursion;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 use crate::environment::Environment;
 use crate::error::RuntimeError;
@@ -1063,9 +1065,162 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 tokio::time::sleep(Duration::from_millis(ms.max(0) as u64)).await;
                 Ok(Value::Unit)
             }
+            NativeFunction::HttpServe => {
+                let [port_value] = stdlib::one(native, args, span)?;
+                let port = stdlib::int(port_value, span)?;
+                self.http_serve(port, span).await
+            }
             _ => unreachable!("only async natives should ever reach eval_await"),
         }
     }
+
+    /// `http_serve(port)` (milestone 25): binds `127.0.0.1:port` and
+    /// serves real HTTP/1.1 forever, one connection at a time,
+    /// dispatching every request to a `handle_request(method: String,
+    /// path: String, body: String) -> String` the AINT program must
+    /// declare. See `docs/milestones/25-real-application/SPEC.md` for
+    /// why this is hand-rolled over a raw `TcpListener` rather than
+    /// `hyper`/`axum` (both want `Send` handler futures; `Value`
+    /// never is), and why there's no router (AINT has no string-
+    /// splitting/regex to build one out of) — routing is just
+    /// `if`/`else` inside `handle_request` itself.
+    async fn http_serve(&self, port: i64, span: Span) -> Result<Value, RuntimeError> {
+        let handler = self.globals.borrow().get("handle_request").ok_or_else(|| {
+            RuntimeError::UndefinedVariable {
+                name: "handle_request".to_string(),
+                span,
+            }
+        })?;
+
+        let listener = TcpListener::bind(("127.0.0.1", port.clamp(0, u16::MAX as i64) as u16))
+            .await
+            .map_err(|err| RuntimeError::Io {
+                message: format!("could not bind to port {port}: {err}"),
+                span,
+            })?;
+
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
+
+            let (method, path, body) = match read_http_request(&mut stream).await {
+                Ok(parsed) => parsed,
+                Err(_) => {
+                    let _ = write_http_response(&mut stream, 400, "").await;
+                    continue;
+                }
+            };
+
+            let args = vec![
+                Value::String(method),
+                Value::String(path),
+                Value::String(body),
+            ];
+            let result = self.call(handler.clone(), args, span).await;
+            let result = match result {
+                Ok(Value::Task(task)) => self.eval_await(&task, span).await,
+                other => other,
+            };
+
+            match result {
+                Ok(Value::String(response_body)) => {
+                    let _ = write_http_response(&mut stream, 200, &response_body).await;
+                }
+                Ok(other) => {
+                    let _ = write_http_response(
+                        &mut stream,
+                        500,
+                        &format!(
+                            "handle_request must return a String, returned a {}",
+                            other.type_name()
+                        ),
+                    )
+                    .await;
+                }
+                Err(err) => {
+                    let _ = write_http_response(&mut stream, 500, &err.to_string()).await;
+                }
+            }
+        }
+    }
+}
+
+/// Reads one HTTP/1.1 request off `stream`: the request line (method,
+/// path), and — if a `Content-Length` header is present — exactly
+/// that many bytes of body. No keep-alive, no chunked encoding, no
+/// header value beyond `Content-Length` is interpreted at all; enough
+/// to be a real, `curl`-able server and no more. See `http_serve`'s
+/// own doc comment for why this is hand-rolled.
+async fn read_http_request(stream: &mut TcpStream) -> Result<(String, String, String), String> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let header_end = loop {
+        let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            return Err("connection closed before headers were complete".to_string());
+        }
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+            break pos;
+        }
+        if buf.len() > 1_000_000 {
+            return Err("request headers too large".to_string());
+        }
+    };
+
+    let header_text = String::from_utf8_lossy(&buf[..header_end]).into_owned();
+    let mut lines = header_text.split("\r\n");
+    let request_line = lines.next().ok_or("empty request")?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().ok_or("missing method")?.to_string();
+    let path = parts.next().ok_or("missing path")?.to_string();
+
+    let mut content_length = 0usize;
+    for line in lines {
+        if let Some((name, value)) = line.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+
+    let body_start = header_end + 4;
+    let mut body = buf[body_start..].to_vec();
+    while body.len() < content_length {
+        let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    body.truncate(content_length);
+
+    Ok((method, path, String::from_utf8_lossy(&body).into_owned()))
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+async fn write_http_response(
+    stream: &mut TcpStream,
+    status: u16,
+    body: &str,
+) -> Result<(), String> {
+    let status_text = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        _ => "Internal Server Error",
+    };
+    let response = format!(
+        "HTTP/1.1 {status} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Checks a runtime `Value` against a declared `Type` — the first
@@ -1424,6 +1579,91 @@ mod tests {
                  print(collections_length([\"a\", \"b\"]))"
             ),
             "3\n2\n"
+        );
+    }
+
+    // --- json/auth/log (milestone 25) ------------------------------------
+    // `db`'s natives write real files, so they're covered at the
+    // `db.rs` module level (with a properly isolated scratch
+    // directory per test) instead of here, to avoid every parallel
+    // `cargo test` thread racing over the same relative `.aintdb`.
+
+    #[test]
+    fn json_get_finds_a_flat_string_field() {
+        assert_eq!(
+            run_capturing(
+                "import json\n\
+                 import option\n\
+                 let found = json_get(\"{\\\"subject\\\": \\\"help\\\"}\", \"subject\")\n\
+                 print(option_unwrap(found))"
+            ),
+            "help\n"
+        );
+    }
+
+    #[test]
+    fn json_get_of_a_missing_key_is_none() {
+        assert_eq!(
+            run_capturing(
+                "import json\n\
+                 import option\n\
+                 print(option_is_some(json_get(\"{\\\"a\\\": \\\"b\\\"}\", \"missing\")))"
+            ),
+            "false\n"
+        );
+    }
+
+    #[test]
+    fn json_object_builds_a_flat_object_json_get_can_read_back() {
+        assert_eq!(
+            run_capturing(
+                "import json\n\
+                 import option\n\
+                 let built = json_object([\"id\", \"subject\"], [\"1\", \"help\"])\n\
+                 print(option_unwrap(json_get(built, \"id\")))\n\
+                 print(option_unwrap(json_get(built, \"subject\")))"
+            ),
+            "1\nhelp\n"
+        );
+    }
+
+    #[test]
+    fn auth_hash_and_verify_password_round_trip() {
+        assert_eq!(
+            run_capturing(
+                "import auth\n\
+                 let hash = auth_hash_password(\"correct horse\")\n\
+                 print(auth_verify_password(\"correct horse\", hash))\n\
+                 print(auth_verify_password(\"wrong password\", hash))"
+            ),
+            "true\nfalse\n"
+        );
+    }
+
+    #[test]
+    fn auth_generate_token_produces_distinct_nonempty_tokens() {
+        assert_eq!(
+            run_capturing(
+                "import auth\n\
+                 let a = auth_generate_token()\n\
+                 let b = auth_generate_token()\n\
+                 print(a == b)\n\
+                 print(a != \"\")"
+            ),
+            "false\ntrue\n"
+        );
+    }
+
+    #[test]
+    fn log_functions_run_without_error() {
+        assert_eq!(
+            run_capturing(
+                "import log\n\
+                 log_info(\"server started\")\n\
+                 log_error(\"something went wrong\")\n\
+                 print(\"done\")"
+            ),
+            "done\n"
         );
     }
 

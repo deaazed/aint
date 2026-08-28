@@ -29,6 +29,12 @@ rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Backs `auth_hash_password`/`auth_verify_password` only (milestone
+# 25) — real password hashing, not a hand-rolled scheme, for the one
+# native this codebase has that touches actual credentials. Pure Rust,
+# no C toolchain dependency (the same constraint that ruled out
+# `rustls`/`ring` in favor of `native-tls` above).
+bcrypt = "0.15"
 
 [dev-dependencies]
 # Only for tests: makes it possible to write test programs as AINT

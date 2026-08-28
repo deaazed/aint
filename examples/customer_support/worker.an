@@ -1,0 +1,56 @@
+import db
+import json
+import log
+import string
+import collections
+import option
+
+// The background half of the customer-support system (milestone 25):
+// drains the `jobs` table `server.an`'s ticket-creation path enqueues
+// a "pending" entry into, one pass, then exits.
+//
+// Deliberately *not* a perpetually-running poll loop: AINT has no
+// loops and no tail-call optimization, so an unbounded recursive
+// "poll forever" would eventually exhaust the call stack no matter
+// how large - there's no sound way to run forever via recursion here.
+// A real deployment runs this repeatedly at the OS level (a cron job,
+// a shell `while true; do aint run worker.an; sleep 5; done`) instead
+// of asking AINT itself to loop indefinitely - process-level
+// repetition, the same reasoning "background jobs" itself is process-
+// level separation rather than in-process concurrency. See
+// docs/milestones/25-real-application/SPEC.md.
+
+fn field(body: String, name: String) -> String {
+    let found = json_get(body, name)
+    if option_is_some(found) {
+        return option_unwrap(found)
+    } else {
+        return ""
+    }
+}
+
+fn process_job(job: String) -> Unit {
+    let job_id = field(job, "id")
+    let ticket_id = field(job, "ticket_id")
+    log_info(string_concat("sending follow-up email for ticket ", ticket_id))
+    let updated = json_object(["id", "ticket_id", "status"], [job_id, ticket_id, "processed"])
+    db_update("jobs", job_id, updated)
+}
+
+fn process_pending(jobs: List<String>, index: Int, processed: Int) -> Int {
+    if index < collections_length(jobs) {
+        let job = jobs[index]
+        if field(job, "status") == "pending" {
+            process_job(job)
+            return process_pending(jobs, index + 1, processed + 1)
+        } else {
+            return process_pending(jobs, index + 1, processed)
+        }
+    } else {
+        return processed
+    }
+}
+
+let processed = process_pending(db_list("jobs"), 0, 0)
+log_info("job queue drained")
+print(processed)

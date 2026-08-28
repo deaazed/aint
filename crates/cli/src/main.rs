@@ -208,12 +208,41 @@ fn run(path: &Path) -> ExitCode {
         Err(code) => return code,
     };
 
-    let interpreter = aint_runtime::Interpreter::new();
-    match runtime.block_on(interpreter.run(&program)) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("{}:{}", path.display(), err);
-            ExitCode::FAILURE
+    // `AINT_MODEL_URL` (milestone 25): `aint run` had no way to use a
+    // real `Model` at all before this — every `infer` call failed
+    // with "no mock response configured," even outside `aint test`,
+    // since `HttpModel` (milestone 16) was never wired into the CLI.
+    // Unset (the default) keeps today's behavior exactly. Tool calls
+    // still have no real backend regardless — `MockTool` is the only
+    // one that's ever existed; see
+    // docs/milestones/25-real-application/SPEC.md.
+    match std::env::var("AINT_MODEL_URL") {
+        Ok(url) => {
+            let model_name =
+                std::env::var("AINT_MODEL_NAME").unwrap_or_else(|_| "default".to_string());
+            let mut model = aint_runtime::HttpModel::new(url, model_name);
+            if let Ok(api_key) = std::env::var("AINT_MODEL_API_KEY") {
+                model = model.with_api_key(api_key);
+            }
+            let interpreter =
+                aint_runtime::Interpreter::with_output_and_model(std::io::stdout(), model);
+            match runtime.block_on(interpreter.run(&program)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{}:{}", path.display(), err);
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        Err(_) => {
+            let interpreter = aint_runtime::Interpreter::new();
+            match runtime.block_on(interpreter.run(&program)) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("{}:{}", path.display(), err);
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }

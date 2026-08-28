@@ -160,7 +160,7 @@ not before.
 `aint fmt`, `aint check`, LSP, editor extension, syntax highlighting,
 autocomplete, go-to-definition, debugger.
 
-## 25 — Real application
+## 25 — Real application — done
 
 Build something non-trivial entirely in AINT — a customer support system
 with an HTTP API, a database, auth, inference, tool calls, background

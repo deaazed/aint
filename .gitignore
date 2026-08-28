@@ -15,3 +15,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# aint-runtime's `db` module (milestone 25) - file-backed tables an
+# AINT program creates at runtime, not source.
+.aintdb/

@@ -11,10 +11,13 @@
 //! writer, which this module has no access to, so `Interpreter::call`
 //! keeps handling it directly.
 
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use aint_ast::Span;
+use rand::RngCore;
 
+use crate::db;
 use crate::error::RuntimeError;
 use crate::value::{NativeFunction, Value};
 
@@ -71,6 +74,27 @@ pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction
             ("option_is_some", NativeFunction::OptionIsSome),
             ("option_unwrap", NativeFunction::OptionUnwrap),
         ]),
+        "json" => Some(vec![
+            ("json_get", NativeFunction::JsonGet),
+            ("json_object", NativeFunction::JsonObject),
+        ]),
+        "db" => Some(vec![
+            ("db_insert", NativeFunction::DbInsert),
+            ("db_get", NativeFunction::DbGet),
+            ("db_list", NativeFunction::DbList),
+            ("db_update", NativeFunction::DbUpdate),
+            ("db_delete", NativeFunction::DbDelete),
+        ]),
+        "auth" => Some(vec![
+            ("auth_hash_password", NativeFunction::AuthHashPassword),
+            ("auth_verify_password", NativeFunction::AuthVerifyPassword),
+            ("auth_generate_token", NativeFunction::AuthGenerateToken),
+        ]),
+        "log" => Some(vec![
+            ("log_info", NativeFunction::LogInfo),
+            ("log_error", NativeFunction::LogError),
+        ]),
+        "http" => Some(vec![("http_serve", NativeFunction::HttpServe)]),
         _ => None,
     }
 }
@@ -256,7 +280,161 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
                 }),
             }
         }
+        NativeFunction::HttpServe => {
+            unreachable!("http_serve is handled directly in Interpreter::run_async_native")
+        }
+        NativeFunction::JsonGet => {
+            let [json, key] = two(native, args, span)?;
+            let json = string(&json, span)?;
+            let key = string(&key, span)?;
+            let parsed: serde_json::Value =
+                serde_json::from_str(json).map_err(|err| RuntimeError::TypeMismatch {
+                    message: format!("json_get: invalid JSON: {err}"),
+                    span,
+                })?;
+            match parsed.get(key).and_then(|v| v.as_str()) {
+                Some(value) => Ok(Value::Option(Some(Box::new(Value::String(
+                    value.to_string(),
+                ))))),
+                None => Ok(Value::Option(None)),
+            }
+        }
+        NativeFunction::JsonObject => {
+            let [keys, values] = two(native, args, span)?;
+            let keys = list_of_strings(keys, span)?;
+            let values = list_of_strings(values, span)?;
+            if keys.len() != values.len() {
+                return Err(RuntimeError::TypeMismatch {
+                    message: format!(
+                        "json_object: {} keys but {} values",
+                        keys.len(),
+                        values.len()
+                    ),
+                    span,
+                });
+            }
+            let mut object = serde_json::Map::new();
+            for (key, value) in keys.into_iter().zip(values) {
+                object.insert(key, serde_json::Value::String(value));
+            }
+            Ok(Value::String(
+                serde_json::to_string(&object).expect("a flat string map always serializes"),
+            ))
+        }
+        NativeFunction::DbInsert => {
+            let [table, id, record] = three(native, args, span)?;
+            let table = string(&table, span)?;
+            let id = string(&id, span)?;
+            let record = string(&record, span)?;
+            let ok = db::insert(Path::new(db::DEFAULT_DB_DIR), table, id, record, span)?;
+            Ok(Value::Bool(ok))
+        }
+        NativeFunction::DbGet => {
+            let [table, id] = two(native, args, span)?;
+            let table = string(&table, span)?;
+            let id = string(&id, span)?;
+            let found = db::get(Path::new(db::DEFAULT_DB_DIR), table, id, span)?;
+            Ok(Value::Option(found.map(|s| Box::new(Value::String(s)))))
+        }
+        NativeFunction::DbList => {
+            let [table] = one(native, args, span)?;
+            let table = string(&table, span)?;
+            let records = db::list(Path::new(db::DEFAULT_DB_DIR), table, span)?;
+            Ok(Value::List(
+                records.into_iter().map(Value::String).collect(),
+            ))
+        }
+        NativeFunction::DbUpdate => {
+            let [table, id, record] = three(native, args, span)?;
+            let table = string(&table, span)?;
+            let id = string(&id, span)?;
+            let record = string(&record, span)?;
+            let ok = db::update(Path::new(db::DEFAULT_DB_DIR), table, id, record, span)?;
+            Ok(Value::Bool(ok))
+        }
+        NativeFunction::DbDelete => {
+            let [table, id] = two(native, args, span)?;
+            let table = string(&table, span)?;
+            let id = string(&id, span)?;
+            let ok = db::delete(Path::new(db::DEFAULT_DB_DIR), table, id, span)?;
+            Ok(Value::Bool(ok))
+        }
+        NativeFunction::AuthHashPassword => {
+            let [password] = one(native, args, span)?;
+            let password = string(&password, span)?;
+            let hash = bcrypt::hash(password, bcrypt::DEFAULT_COST).map_err(|err| {
+                RuntimeError::TypeMismatch {
+                    message: format!("auth_hash_password: {err}"),
+                    span,
+                }
+            })?;
+            Ok(Value::String(hash))
+        }
+        NativeFunction::AuthVerifyPassword => {
+            let [password, hash] = two(native, args, span)?;
+            let password = string(&password, span)?;
+            let hash = string(&hash, span)?;
+            let matches = bcrypt::verify(password, hash).unwrap_or(false);
+            Ok(Value::Bool(matches))
+        }
+        NativeFunction::AuthGenerateToken => {
+            let [] = zero(native, args, span)?;
+            let mut bytes = [0u8; 24];
+            rand::thread_rng().fill_bytes(&mut bytes);
+            let token = bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+            Ok(Value::String(token))
+        }
+        NativeFunction::LogInfo => {
+            let [message] = one(native, args, span)?;
+            log_line("INFO", string(&message, span)?);
+            Ok(Value::Unit)
+        }
+        NativeFunction::LogError => {
+            let [message] = one(native, args, span)?;
+            log_line("ERROR", string(&message, span)?);
+            Ok(Value::Unit)
+        }
     }
+}
+
+fn log_line(level: &str, message: &str) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    eprintln!("[{now} {level}] {message}");
+}
+
+fn list_of_strings(value: Value, span: Span) -> Result<Vec<String>, RuntimeError> {
+    match value {
+        Value::List(items) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::String(s) => Ok(s),
+                other => Err(RuntimeError::TypeMismatch {
+                    message: format!(
+                        "expected a List<String>, found a List containing {}",
+                        other.type_name()
+                    ),
+                    span,
+                }),
+            })
+            .collect(),
+        other => Err(RuntimeError::TypeMismatch {
+            message: format!("expected List<String>, found {}", other.type_name()),
+            span,
+        }),
+    }
+}
+
+fn three(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<[Value; 3], RuntimeError> {
+    let found = args.len();
+    args.try_into().map_err(|_| RuntimeError::ArityMismatch {
+        name: native.name().to_string(),
+        expected: 3,
+        found,
+        span,
+    })
 }
 
 fn distribution(value: Value, span: Span) -> Result<(String, Vec<(String, f64)>), RuntimeError> {

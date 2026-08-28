@@ -174,6 +174,25 @@ pub enum NativeFunction {
     DistributionRequireConfidence,
     OptionIsSome,
     OptionUnwrap,
+    /// `json`/`db`/`auth`/`log`/`http` (milestone 25) — see
+    /// `docs/milestones/25-real-application/SPEC.md`.
+    JsonGet,
+    JsonObject,
+    DbInsert,
+    DbGet,
+    DbList,
+    DbUpdate,
+    DbDelete,
+    AuthHashPassword,
+    AuthVerifyPassword,
+    AuthGenerateToken,
+    LogInfo,
+    LogError,
+    /// The one async native in this milestone's additions — needs to
+    /// call back into the interpreter per request, so it's
+    /// implemented directly on `Interpreter`, not in `stdlib::call`.
+    /// See SPEC.md.
+    HttpServe,
 }
 
 impl Value {
@@ -272,12 +291,29 @@ impl NativeFunction {
             NativeFunction::DistributionRequireConfidence => "distribution_require_confidence",
             NativeFunction::OptionIsSome => "option_is_some",
             NativeFunction::OptionUnwrap => "option_unwrap",
+            NativeFunction::JsonGet => "json_get",
+            NativeFunction::JsonObject => "json_object",
+            NativeFunction::DbInsert => "db_insert",
+            NativeFunction::DbGet => "db_get",
+            NativeFunction::DbList => "db_list",
+            NativeFunction::DbUpdate => "db_update",
+            NativeFunction::DbDelete => "db_delete",
+            NativeFunction::AuthHashPassword => "auth_hash_password",
+            NativeFunction::AuthVerifyPassword => "auth_verify_password",
+            NativeFunction::AuthGenerateToken => "auth_generate_token",
+            NativeFunction::LogInfo => "log_info",
+            NativeFunction::LogError => "log_error",
+            NativeFunction::HttpServe => "http_serve",
         }
     }
 
     /// Whether calling this defers into a [`Value::Task`] instead of
-    /// running immediately. Only `time_sleep_ms` today.
+    /// running immediately. `time_sleep_ms` and `http_serve` — both
+    /// genuinely suspend on real I/O.
     pub(crate) fn is_async(self) -> bool {
-        matches!(self, NativeFunction::TimeSleepMs)
+        matches!(
+            self,
+            NativeFunction::TimeSleepMs | NativeFunction::HttpServe
+        )
     }
 }

@@ -1,0 +1,229 @@
+import http
+import json
+import db
+import auth
+import log
+import string
+import collections
+import option
+
+enum Sentiment { Positive Neutral Negative }
+
+infer classify_sentiment(text: String) -> Sentiment
+
+tool database_get_account_tier(user_id: String) -> String
+
+fn error_response(message: String) -> String {
+    return json_object(["error"], [message])
+}
+
+fn field(body: String, name: String) -> String {
+    let found = json_get(body, name)
+    if option_is_some(found) {
+        return option_unwrap(found)
+    } else {
+        return ""
+    }
+}
+
+// --- auth ---------------------------------------------------------------
+
+fn find_user_by_email(users: List<String>, index: Int, email: String) -> String {
+    if index < collections_length(users) {
+        let user = users[index]
+        if field(user, "email") == email {
+            return user
+        } else {
+            return find_user_by_email(users, index + 1, email)
+        }
+    } else {
+        return ""
+    }
+}
+
+fn handle_register(body: String) -> String {
+    let email = field(body, "email")
+    let password = field(body, "password")
+    if email == "" {
+        return error_response("email is required")
+    }
+    if password == "" {
+        return error_response("password is required")
+    }
+    let existing = find_user_by_email(db_list("users"), 0, email)
+    if existing != "" {
+        return error_response("that email is already registered")
+    }
+    let user_id = auth_generate_token()
+    let password_hash = auth_hash_password(password)
+    let record = json_object(["id", "email", "password_hash"], [user_id, email, password_hash])
+    db_insert("users", user_id, record)
+    log_info(string_concat("registered user ", user_id))
+    return json_object(["user_id"], [user_id])
+}
+
+fn handle_login(body: String) -> String {
+    let email = field(body, "email")
+    let password = field(body, "password")
+    let user = find_user_by_email(db_list("users"), 0, email)
+    if user == "" {
+        return error_response("invalid email or password")
+    }
+    let hash = field(user, "password_hash")
+    if auth_verify_password(password, hash) {
+        let user_id = field(user, "id")
+        let token = auth_generate_token()
+        let session = json_object(["id", "user_id"], [token, user_id])
+        db_insert("sessions", token, session)
+        log_info(string_concat("logged in user ", user_id))
+        return json_object(["token"], [token])
+    } else {
+        return error_response("invalid email or password")
+    }
+}
+
+// Returns the session's `user_id`, or "" if the token doesn't name a
+// live session - the same empty-string-sentinel pattern used
+// throughout this file, since AINT source has no way to construct an
+// `Option<String>` value directly (only stdlib natives like
+// `distribution_require_confidence` can produce one) - see
+// docs/milestones/25-real-application/SPEC.md.
+fn authenticate(token: String) -> String {
+    let session = db_get("sessions", token)
+    if option_is_some(session) {
+        return field(option_unwrap(session), "user_id")
+    } else {
+        return ""
+    }
+}
+
+// --- tickets --------------------------------------------------------------
+
+fn priority_for(sentiment_is_negative: Bool, user_id: String) -> String {
+    if sentiment_is_negative {
+        let tier = await database_get_account_tier(user_id)
+        if tier == "premium" {
+            return "high"
+        } else {
+            return "normal"
+        }
+    } else {
+        return "normal"
+    }
+}
+
+fn handle_create_ticket(body: String) -> String {
+    let user_id = authenticate(field(body, "token"))
+    if user_id == "" {
+        return error_response("not authenticated")
+    }
+    let subject = field(body, "subject")
+    let ticket_body = field(body, "body")
+    if subject == "" {
+        return error_response("subject is required")
+    }
+
+    let sentiment = await classify_sentiment(ticket_body)
+    let is_negative = sentiment == Sentiment_Negative
+    let priority = priority_for(is_negative, user_id)
+    let ticket_id = auth_generate_token()
+    let record = json_object(
+        ["id", "user_id", "subject", "body", "status", "priority"],
+        [ticket_id, user_id, subject, ticket_body, "open", priority]
+    )
+    db_insert("tickets", ticket_id, record)
+
+    if is_negative {
+        let job_id = auth_generate_token()
+        let job = json_object(["id", "ticket_id", "status"], [job_id, ticket_id, "pending"])
+        db_insert("jobs", job_id, job)
+    }
+
+    log_info(string_concat("created ticket ", ticket_id))
+    return json_object(["ticket_id", "priority"], [ticket_id, priority])
+}
+
+fn tickets_for_user(tickets: List<String>, index: Int, user_id: String) -> String {
+    if index < collections_length(tickets) {
+        let ticket = tickets[index]
+        let rest = tickets_for_user(tickets, index + 1, user_id)
+        if field(ticket, "user_id") == user_id {
+            if rest == "" {
+                return ticket
+            } else {
+                return string_concat(string_concat(ticket, ","), rest)
+            }
+        } else {
+            return rest
+        }
+    } else {
+        return ""
+    }
+}
+
+fn handle_list_tickets(body: String) -> String {
+    let user_id = authenticate(field(body, "token"))
+    if user_id == "" {
+        return error_response("not authenticated")
+    }
+    let joined = tickets_for_user(db_list("tickets"), 0, user_id)
+    return string_concat(string_concat("{\"tickets\": [", joined), "]}")
+}
+
+fn handle_resolve_ticket(body: String) -> String {
+    let user_id = authenticate(field(body, "token"))
+    if user_id == "" {
+        return error_response("not authenticated")
+    }
+    let ticket_id = field(body, "ticket_id")
+    let ticket = db_get("tickets", ticket_id)
+    if option_is_some(ticket) {
+        let record = option_unwrap(ticket)
+        if field(record, "user_id") == user_id {
+            let updated = json_object(
+                ["id", "user_id", "subject", "body", "status", "priority"],
+                [ticket_id, user_id, field(record, "subject"), field(record, "body"), "resolved", field(record, "priority")]
+            )
+            db_update("tickets", ticket_id, updated)
+            log_info(string_concat("resolved ticket ", ticket_id))
+            return json_object(["status"], ["resolved"])
+        } else {
+            return error_response("not your ticket")
+        }
+    } else {
+        return error_response("no such ticket")
+    }
+}
+
+// --- routing ----------------------------------------------------------
+//
+// No router: AINT has no string-splitting/regex to build one out of,
+// so this is exact-path matching in plain if/else, entirely inside
+// `handle_request` - see docs/milestones/25-real-application/SPEC.md.
+
+fn handle_request(method: String, path: String, body: String) -> String {
+    if path == "/register" {
+        return handle_register(body)
+    } else {
+        if path == "/login" {
+            return handle_login(body)
+        } else {
+            if path == "/tickets" {
+                return handle_create_ticket(body)
+            } else {
+                if path == "/tickets/list" {
+                    return handle_list_tickets(body)
+                } else {
+                    if path == "/tickets/resolve" {
+                        return handle_resolve_ticket(body)
+                    } else {
+                        return error_response("not found")
+                    }
+                }
+            }
+        }
+    }
+}
+
+log_info("customer support server starting")
+await http_serve(8080)

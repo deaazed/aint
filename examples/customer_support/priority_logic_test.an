@@ -1,0 +1,62 @@
+// Deterministic, offline tests for the AI-driven priority decision in
+// `server.an`'s `handle_create_ticket`: a negative-sentiment
+// classification triggers a `tool` call to look up the customer's
+// account tier, and a premium tier upgrades the ticket to "high"
+// priority.
+//
+// This deliberately duplicates `priority_for` from `server.an` rather
+// than importing it - AINT has no cross-file `import` yet (see
+// docs/milestones/23-package-manager/SPEC.md's own honestly-stated
+// gap), and `aint test` re-executes every non-`test` top-level
+// statement before each test body runs (see
+// `crates/runtime/src/test_runner.rs`), which would re-run
+// `server.an`'s own `await http_serve(8080)` and hang forever if
+// its tests lived in the same file. Splitting the AI-decision logic
+// out into its own small, testable file is the honest fix, not a
+// workaround - see docs/milestones/25-real-application/SPEC.md.
+
+enum Sentiment { Positive Neutral Negative }
+
+infer classify_sentiment(text: String) -> Sentiment
+
+tool database_get_account_tier(user_id: String) -> String
+
+fn priority_for(sentiment_is_negative: Bool, user_id: String) -> String {
+    if sentiment_is_negative {
+        let tier = await database_get_account_tier(user_id)
+        if tier == "premium" {
+            return "high"
+        } else {
+            return "normal"
+        }
+    } else {
+        return "normal"
+    }
+}
+
+fn decide_priority(review: String, user_id: String) -> String {
+    let sentiment = await classify_sentiment(review)
+    return priority_for(sentiment == Sentiment_Negative, user_id)
+}
+
+test "a negative ticket from a premium customer is high priority" {
+    mock classify_sentiment -> Sentiment_Negative
+    mock database_get_account_tier -> "premium"
+    assert decide_priority("everything is on fire", "user-1") == "high"
+}
+
+test "a negative ticket from a standard customer stays normal priority" {
+    mock classify_sentiment -> Sentiment_Negative
+    mock database_get_account_tier -> "standard"
+    assert decide_priority("small issue", "user-2") == "normal"
+}
+
+test "a positive ticket never calls the tool and stays normal priority" {
+    mock classify_sentiment -> Sentiment_Positive
+    assert decide_priority("thanks, great job", "user-3") == "normal"
+}
+
+test "a neutral ticket never calls the tool and stays normal priority" {
+    mock classify_sentiment -> Sentiment_Neutral
+    assert decide_priority("just checking in", "user-4") == "normal"
+}

@@ -7,6 +7,7 @@
 //! against `MockTool` the same way. See `docs/RUNTIME.md` and
 //! `docs/milestones/04-tree-walk-interpreter/SPEC.md`.
 
+mod db;
 mod environment;
 mod error;
 mod http_model;
