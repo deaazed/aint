@@ -167,7 +167,7 @@ with an HTTP API, a database, auth, inference, tool calls, background
 jobs, logging, and tests. If AINT can't comfortably build this, the
 abstractions aren't right yet.
 
-## 26 — Benchmark against the status quo
+## 26 — Benchmark against the status quo — done
 
 Compare the milestone-25 application against the equivalent
 Python + Pydantic + an LLM SDK + LangGraph stack: lines of code,
