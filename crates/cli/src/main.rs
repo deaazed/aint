@@ -48,6 +48,24 @@ enum Command {
         /// Path to a .an source file.
         path: PathBuf,
     },
+    /// Scaffold a new AINT package: an `aint.toml` manifest and a
+    /// starter `main.an`.
+    Init {
+        /// Directory to create the package in. Defaults to the
+        /// current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Add a local path dependency to the current package's
+    /// `aint.toml`, then re-resolve and re-lock the whole dependency
+    /// graph. There's no registry yet — see
+    /// docs/milestones/23-package-manager/SPEC.md — so this is the
+    /// only form `aint add` takes.
+    Add {
+        /// Path to the dependency's own package directory (one
+        /// containing its own `aint.toml`).
+        path: PathBuf,
+    },
 }
 
 /// AINT's only iteration mechanism is recursion — there are no loops —
@@ -68,6 +86,8 @@ fn main() -> ExitCode {
             Command::Run { path, vm: false } => run(&path),
             Command::Run { path, vm: true } => run_vm(&path),
             Command::Test { path } => test(&path),
+            Command::Init { path } => init(&path),
+            Command::Add { path } => add(&path),
         })
         .expect("failed to spawn the interpreter thread")
         .join()
@@ -201,4 +221,102 @@ fn test(path: &Path) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// `aint init` (milestone 23): scaffolds `<path>/aint.toml` and a
+/// starter `<path>/main.an`. Refuses to overwrite an existing
+/// manifest — this creates a new package, it doesn't reset one.
+fn init(path: &Path) -> ExitCode {
+    if let Err(err) = fs::create_dir_all(path) {
+        eprintln!("error: could not create {}: {err}", path.display());
+        return ExitCode::FAILURE;
+    }
+
+    let manifest_path = path.join(aint_package::MANIFEST_FILE_NAME);
+    if manifest_path.exists() {
+        eprintln!("error: {} already exists", manifest_path.display());
+        return ExitCode::FAILURE;
+    }
+
+    let name = path
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "my-project".to_string());
+
+    let manifest = aint_package::Manifest::new(name, "0.1.0");
+    if let Err(err) = manifest.write_to_dir(path) {
+        eprintln!("error: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    let main_an = path.join("main.an");
+    if !main_an.exists() {
+        if let Err(err) = fs::write(&main_an, "print(\"Hello, AINT!\")\n") {
+            eprintln!("error: could not write {}: {err}", main_an.display());
+            return ExitCode::FAILURE;
+        }
+    }
+
+    println!("created {}", manifest_path.display());
+    ExitCode::SUCCESS
+}
+
+/// `aint add --path` (milestone 23): adds a local path dependency to
+/// the current directory's `aint.toml`, then re-resolves and
+/// re-writes `aint.lock` for the whole graph — not just appending the
+/// one new entry, since adding one dependency can change what the
+/// full, flattened graph looks like (a shared transitive dependency,
+/// a newly-introduced cycle, and so on).
+fn add(dep_path: &Path) -> ExitCode {
+    let cwd = match std::env::current_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("error: could not determine the current directory: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut manifest = match aint_package::Manifest::read_from_dir(&cwd) {
+        Ok(manifest) => manifest,
+        Err(err) => {
+            eprintln!("error: {err} — run `aint init` first?");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let dep_manifest = match aint_package::Manifest::read_from_dir(dep_path) {
+        Ok(manifest) => manifest,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let name = dep_manifest.package.name.clone();
+    manifest.dependencies.insert(
+        name.clone(),
+        aint_package::Dependency {
+            path: dep_path.display().to_string(),
+        },
+    );
+    if let Err(err) = manifest.write_to_dir(&cwd) {
+        eprintln!("error: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    let lockfile = match aint_package::resolve(&cwd) {
+        Ok(lockfile) => lockfile,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(err) = lockfile.write_to_dir(&cwd) {
+        eprintln!("error: {err}");
+        return ExitCode::FAILURE;
+    }
+
+    println!("added `{name}` (path: {})", dep_path.display());
+    ExitCode::SUCCESS
 }

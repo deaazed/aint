@@ -149,7 +149,7 @@ being sufficient. Don't invent this early.
 `AST -> AIR -> Bytecode -> AINT VM`, for startup time, execution speed,
 sandboxing, and portability. Still no LLVM.
 
-## 23 — Package manager
+## 23 — Package manager — done
 
 `aint init`, `aint add`, `axiom.toml`-equivalent manifest, lockfile,
 dependency resolution, registry. Comes after the language itself works,
