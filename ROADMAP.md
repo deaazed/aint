@@ -173,7 +173,7 @@ Compare the milestone-25 application against the equivalent
 Python + Pydantic + an LLM SDK + LangGraph stack: lines of code,
 latency, memory, failure handling, testability, observability, cost.
 
-## 27 — Find the killer abstraction
+## 27 — Find the killer abstraction — done
 
 Not predetermined. After milestone 26, ask what AINT actually made
 dramatically easier — typed inference, uncertainty handling, AI

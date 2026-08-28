@@ -8,13 +8,55 @@ plan before writing code.
 
 ## The thesis
 
+**Revised at milestone 27** — see
+`docs/milestones/27-killer-abstraction/FINDINGS.md` for the full
+evidence. The original working hypothesis (below the line) held that
+typed inference and typed uncertainty were the bet. Milestone 26's
+actual head-to-head against Python + Pydantic + LangGraph found that
+Python's ecosystem has substantially closed the gap on typed inference
+and deterministic testing specifically — `benchmark/python/ai.py`
+gets structured output out of Pydantic in about as many lines as
+`infer` takes, and `pytest` + `TestClient` + `monkeypatch` covered
+*more* ground in *one* suite than AINT's own two-mechanism test story
+did. That's not a failure of the language; it's evidence the original
+bet was aimed partly at a gap that's since closed elsewhere.
+
+What Python's ecosystem has *not* closed, and isn't positioned to
+close without becoming a different kind of language, is governance:
+
+> **A program's entire AI surface area should be statically checkable
+> and runtime-enforceable, the same way type safety already is — not
+> a set of conventions a team has to remember to apply.**
+
+Concretely: `effects [pure]` proves a function cannot reach a model or
+a tool, rejected by the compiler if it does — not a lint rule a team
+agreed to follow. `permissions [...]` proves which tools a specific
+`infer` can reach, checked once statically and again at the point of
+execution, independent of what the model was actually offered.
+`budget` is a resource ceiling the runtime enforces for every
+`infer`/`tool` call in a program, not a decorator someone has to
+remember to add per route. None of these are a library import away in
+a dynamically-typed language with no effect system to hook into —
+they need the type checker and the runtime to agree on what "this
+function's allowed behavior" is, which is a language decision.
+
+Typed uncertainty (`Distribution<T>`, below) remains real and
+undiminished by this revision — Python still has no shared idiom for
+it. It sits alongside governance as the other genuinely
+hard-to-replicate piece, distinct from typed inference and
+deterministic testing, which turned out to be things a good library
+gets you most of the way to.
+
+**Historical context — the original bet, as stated before milestone
+27's revision:**
+
 Traditional programming languages give you exactly one kind of value:
 one you know for certain. `x = 10` means `x` is 10, full stop. AI
 systems don't work that way — a classifier doesn't know your customer
 wants a refund, it's 94% confident they do. Every language currently
 bolts that uncertainty on top as an API response you parse by hand.
 
-AINT's bet is that this is a language-design gap, not just tooling debt:
+AINT's original bet was that this is a language-design gap, not just tooling debt:
 
 > **Deterministic computation and probabilistic inference should be
 > equally fundamental to the language — not one implemented on top of
@@ -219,11 +261,33 @@ agents have been built in the language and a pattern actually repeats.
 
 ## How to know if this is working
 
-The honest test, revisited at milestone 25-27: build something real
-(a customer support system with an HTTP API, a database, auth,
-inference, tool calls, background jobs, and tests) entirely in AINT, and
-compare it against the equivalent Python + Pydantic + an LLM SDK +
-LangGraph stack on lines of code, latency, testability, and how it fails.
-If AINT isn't clearly better on that comparison, the language hasn't
-found its abstraction yet, and milestone 27 exists to go find it rather
-than to declare victory on a predetermined answer.
+The honest test, run at milestones 25–27: `examples/customer_support/`
+was built entirely in AINT, then compared against a real Python +
+Pydantic + `openai` SDK + LangGraph equivalent
+(`benchmark/python/`) on lines of code, memory, binary size, latency,
+failure handling, testability, observability, and cost — see
+`docs/milestones/26-benchmark/RESULTS.md` for every number.
+
+The result was not a clean win, and the thesis revision above is the
+direct consequence of taking that seriously rather than declaring
+victory on the predetermined answer this document used to lead with.
+AINT won clearly on memory (~12x) and binary/dependency footprint
+(~40x), and on latency once cryptographic cost is factored out (~3x
+on a route with none). It lost on total line count once its own
+one-time stdlib cost is counted, and on testability, where Python's
+general-purpose tooling covered more ground in one suite than AINT's
+two-mechanism approach. Failure handling was a wash — different
+defaults, different tradeoffs, neither strictly better.
+
+That mixed result is what sent milestone 27 looking for a different
+answer than "AI operations are easier to write in AINT" — see
+`docs/milestones/27-killer-abstraction/FINDINGS.md`. It's also an
+honest limitation worth stating here directly: the demonstration
+application doesn't yet exercise the governance claim the revised
+thesis actually rests on. `server.an` declares no `effects [pure]`
+anywhere it would matter, no `permissions` restricting
+`classify_sentiment`, and no `budget`. The mechanisms are real and
+already built (milestones 13, 17, 20); a future milestone that
+actually leans on them in a real application would be a stronger test
+of the revised thesis than milestone 25's application, as built,
+provides.
