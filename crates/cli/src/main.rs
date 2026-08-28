@@ -66,6 +66,25 @@ enum Command {
         /// containing its own `aint.toml`).
         path: PathBuf,
     },
+    /// Parse and type-check a file without running it. Exit code
+    /// reflects success; nothing is printed on success (matching
+    /// `gofmt -l`/`tsc --noEmit`'s "silence means it's fine").
+    Check {
+        /// Path to a .an source file.
+        path: PathBuf,
+    },
+    /// Reformat a file to AINT's canonical style, in place. Refuses
+    /// (exit non-zero, file untouched) rather than silently deleting
+    /// a `//` comment — see
+    /// docs/milestones/24-language-tooling/SPEC.md.
+    Fmt {
+        /// Path to a .an source file.
+        path: PathBuf,
+        /// Report whether the file is already formatted instead of
+        /// writing to it; exits non-zero if it isn't. For CI.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// AINT's only iteration mechanism is recursion — there are no loops —
@@ -88,6 +107,8 @@ fn main() -> ExitCode {
             Command::Test { path } => test(&path),
             Command::Init { path } => init(&path),
             Command::Add { path } => add(&path),
+            Command::Check { path } => check(&path),
+            Command::Fmt { path, check } => fmt(&path, check),
         })
         .expect("failed to spawn the interpreter thread")
         .join()
@@ -114,6 +135,57 @@ fn parse_and_check(path: &Path) -> Result<Program, ExitCode> {
     })?;
 
     Ok(program)
+}
+
+/// `aint check` (milestone 24): exactly `parse_and_check`'s gate,
+/// exposed on its own — for a fast "does this even type-check"
+/// signal (an editor's on-save hook, CI) without paying for a
+/// `Tokio` runtime or actually running the program.
+fn check(path: &Path) -> ExitCode {
+    match parse_and_check(path) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(code) => code,
+    }
+}
+
+/// `aint fmt` (milestone 24). `--check` reports without writing,
+/// matching `rustfmt --check`'s CI-friendly convention.
+fn fmt(path: &Path, check_only: bool) -> ExitCode {
+    let source = match fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(err) => {
+            eprintln!("error: could not read {}: {err}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let formatted = match aint_fmt::format(&source) {
+        Ok(formatted) => formatted,
+        Err(err) => {
+            eprintln!("{}: {err}", path.display());
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if check_only {
+        if formatted == source {
+            ExitCode::SUCCESS
+        } else {
+            println!("{}", path.display());
+            ExitCode::FAILURE
+        }
+    } else {
+        if formatted == source {
+            return ExitCode::SUCCESS;
+        }
+        match fs::write(path, formatted) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("error: could not write {}: {err}", path.display());
+                ExitCode::FAILURE
+            }
+        }
+    }
 }
 
 fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, ExitCode> {

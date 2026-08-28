@@ -155,7 +155,7 @@ sandboxing, and portability. Still no LLVM.
 dependency resolution, registry. Comes after the language itself works,
 not before.
 
-## 24 — Language tooling
+## 24 — Language tooling — done
 
 `aint fmt`, `aint check`, LSP, editor extension, syntax highlighting,
 autocomplete, go-to-definition, debugger.

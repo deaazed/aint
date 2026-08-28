@@ -37,6 +37,22 @@ fn test_aint(path: &str) -> Output {
         .expect("failed to spawn the aint binary")
 }
 
+fn check_aint(path: &str) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_aint"))
+        .arg("check")
+        .arg(path)
+        .output()
+        .expect("failed to spawn the aint binary")
+}
+
+fn fmt_aint(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_aint"))
+        .arg("fmt")
+        .args(args)
+        .output()
+        .expect("failed to spawn the aint binary")
+}
+
 #[test]
 fn hello_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("hello.an"));
@@ -318,4 +334,77 @@ fn aint_test_reports_a_failing_assertion_and_exits_nonzero() {
     assert!(stdout.contains("this should fail"));
     assert!(stdout.contains("FAILED"));
     assert!(stdout.contains("1 run, 0 passed, 1 failed"));
+}
+
+/// `aint check` (milestone 24): exactly `parse_and_check`'s gate.
+#[test]
+fn check_accepts_a_well_typed_program_silently() {
+    let output = check_aint(&example_path("showcase.an"));
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn check_rejects_an_ill_typed_program_clearly() {
+    let path = std::env::temp_dir().join(format!("aint_cli_check_{}.an", std::process::id()));
+    std::fs::write(
+        &path,
+        "fn add(a: Int, b: Int) -> Int { return a + b }\nprint(add(\"hello\", true))\n",
+    )
+    .expect("failed to write a temporary .an file");
+
+    let output = check_aint(path.to_str().expect("temp path should be utf8"));
+    std::fs::remove_file(&path).ok();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("argument"));
+}
+
+/// `aint fmt --check` (milestone 24): reports, doesn't write.
+#[test]
+fn fmt_check_reports_an_unformatted_file_without_writing_it() {
+    let path = std::env::temp_dir().join(format!("aint_cli_fmt_check_{}.an", std::process::id()));
+    let unformatted = "let   x = (1+2)\nprint(x)\n";
+    std::fs::write(&path, unformatted).expect("failed to write a temporary .an file");
+
+    let output = fmt_aint(&["--check", path.to_str().expect("temp path should be utf8")]);
+    let contents_after = std::fs::read_to_string(&path).expect("file should still exist");
+    std::fs::remove_file(&path).ok();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        contents_after, unformatted,
+        "`--check` must never write to the file"
+    );
+}
+
+#[test]
+fn fmt_writes_a_reformatted_file_in_place() {
+    let path = std::env::temp_dir().join(format!("aint_cli_fmt_write_{}.an", std::process::id()));
+    std::fs::write(&path, "let   x = (1+2)\nprint(x)\n")
+        .expect("failed to write a temporary .an file");
+
+    let output = fmt_aint(&[path.to_str().expect("temp path should be utf8")]);
+    let contents_after = std::fs::read_to_string(&path).expect("file should still exist");
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success());
+    assert_eq!(contents_after, "let x = 1 + 2\nprint(x)\n");
+}
+
+#[test]
+fn fmt_refuses_a_file_with_a_comment_and_leaves_it_untouched() {
+    let path = std::env::temp_dir().join(format!("aint_cli_fmt_comment_{}.an", std::process::id()));
+    let original = "let x = 1 // a comment\nprint(x)\n";
+    std::fs::write(&path, original).expect("failed to write a temporary .an file");
+
+    let output = fmt_aint(&[path.to_str().expect("temp path should be utf8")]);
+    let contents_after = std::fs::read_to_string(&path).expect("file should still exist");
+    std::fs::remove_file(&path).ok();
+
+    assert!(!output.status.success());
+    assert_eq!(contents_after, original, "the file must be left untouched");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("comment"));
 }

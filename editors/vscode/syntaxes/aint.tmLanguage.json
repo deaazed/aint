@@ -1,0 +1,114 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "AINT",
+  "scopeName": "source.aint",
+  "fileTypes": ["an"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#declarations" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.aint",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.aint",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.aint",
+              "match": "\\\\[\"\\\\ntr]"
+            }
+          ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.aint",
+          "match": "\\b[0-9]+(\\.[0-9]+)?\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.aint",
+          "match": "\\b(if|else|return)\\b"
+        },
+        {
+          "name": "keyword.control.flow.aint",
+          "match": "\\b(await|async)\\b"
+        },
+        {
+          "name": "keyword.other.aint",
+          "match": "\\b(let|import|effects|permissions|mock|assert)\\b"
+        },
+        {
+          "name": "constant.language.boolean.aint",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "comment": "fn/async fn/infer/tool/enum/test/budget name - the declaration keyword plus the name it introduces",
+          "match": "\\b(fn|infer|tool|enum|test|budget)\\b\\s*([A-Za-z_][A-Za-z0-9_]*)?",
+          "captures": {
+            "1": { "name": "storage.type.function.aint" },
+            "2": { "name": "entity.name.function.aint" }
+          }
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "comment": "Built-in types and the generic type constructors, capitalized by AINT's own convention",
+          "name": "support.type.aint",
+          "match": "\\b(Int|Float|Bool|String|Unit|List|Option|Task|Inference|Distribution|Tool)\\b"
+        },
+        {
+          "comment": "Any other capitalized identifier is a user-declared enum type or an EnumName_Variant reference",
+          "name": "entity.name.type.aint",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.aint",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.comparison.aint",
+          "match": "==|!=|<|>"
+        },
+        {
+          "name": "keyword.operator.arithmetic.aint",
+          "match": "\\+|-|\\*|/"
+        },
+        {
+          "name": "keyword.operator.assignment.aint",
+          "match": "="
+        }
+      ]
+    }
+  }
+}

@@ -20,5 +20,6 @@ aint-ir = { path = "../ir" }
 aint-runtime = { path = "../runtime" }
 aint-vm = { path = "../vm" }
 aint-package = { path = "../package" }
+aint-fmt = { path = "../fmt" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }

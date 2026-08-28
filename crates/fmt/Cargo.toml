@@ -1,0 +1,11 @@
+[package]
+name = "aint-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "AINT's canonical source formatter (milestone 24)."
+
+[dependencies]
+aint-ast = { path = "../ast" }
+aint-parser = { path = "../parser" }

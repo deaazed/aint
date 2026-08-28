@@ -7,6 +7,7 @@ name = "aint"
 version = "0.1.0"
 dependencies = [
  "aint-ast",
+ "aint-fmt",
  "aint-ir",
  "aint-lexer",
  "aint-package",
@@ -21,6 +22,14 @@ dependencies = [
 [[package]]
 name = "aint-ast"
 version = "0.1.0"
+
+[[package]]
+name = "aint-fmt"
+version = "0.1.0"
+dependencies = [
+ "aint-ast",
+ "aint-parser",
+]
 
 [[package]]
 name = "aint-ir"

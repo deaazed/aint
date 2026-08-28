@@ -1,0 +1,27 @@
+{
+  "name": "aint-language",
+  "displayName": "AINT",
+  "description": "Syntax highlighting and language configuration for AINT (.an files).",
+  "version": "0.1.0",
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "aint",
+        "aliases": ["AINT"],
+        "extensions": [".an"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "aint",
+        "scopeName": "source.aint",
+        "path": "./syntaxes/aint.tmLanguage.json"
+      }
+    ]
+  }
+}
