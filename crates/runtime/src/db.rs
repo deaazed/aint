@@ -29,11 +29,46 @@ struct Row {
     record: String,
 }
 
+/// `table` becomes part of a filesystem path (`table_path`, below)
+/// with no other check in between — an AINT program is free to pass
+/// any `String` value as a table name, including one built from
+/// untrusted input (a request body field, in a program shaped like
+/// `examples/customer_support/server.an`). Without this check,
+/// `db_insert("../../../etc/cron.d/x", ...)` would attempt to write
+/// outside `.aintdb` entirely - a real path-traversal vulnerability,
+/// not a hypothetical one, found in this milestone's own security
+/// pass. See `docs/milestones/28-production-language/SPEC.md`.
+///
+/// Deliberately conservative rather than merely rejecting `..`:
+/// requiring every character to be alphanumeric, `_`, or `-` also
+/// rules out absolute paths, path separators of either flavor
+/// (`/`/`\`), and null bytes, without needing to reason about every
+/// way a partial blocklist could be bypassed (Windows/Unix path
+/// syntax differences, `%2e%2e`-style encoding after some future
+/// caller URL-decodes a value first, and so on).
+fn valid_table_name(table: &str, span: Span) -> Result<(), RuntimeError> {
+    let ok = !table.is_empty()
+        && table
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if ok {
+        Ok(())
+    } else {
+        Err(RuntimeError::TypeMismatch {
+            message: format!(
+                "\"{table}\" is not a valid db table name (letters, digits, `_`, and `-` only)"
+            ),
+            span,
+        })
+    }
+}
+
 fn table_path(base_dir: &Path, table: &str) -> PathBuf {
     base_dir.join(format!("{table}.jsonl"))
 }
 
 fn read_table(base_dir: &Path, table: &str, span: Span) -> Result<Vec<Row>, RuntimeError> {
+    valid_table_name(table, span)?;
     let path = table_path(base_dir, table);
     if !path.exists() {
         return Ok(Vec::new());
@@ -55,6 +90,7 @@ fn read_table(base_dir: &Path, table: &str, span: Span) -> Result<Vec<Row>, Runt
 }
 
 fn write_table(base_dir: &Path, table: &str, rows: &[Row], span: Span) -> Result<(), RuntimeError> {
+    valid_table_name(table, span)?;
     fs::create_dir_all(base_dir).map_err(|err| RuntimeError::Io {
         message: format!("could not create {}: {err}", base_dir.display()),
         span,
@@ -278,5 +314,42 @@ mod tests {
             get(&scratch.path, "users", "1", span()).unwrap(),
             Some("a-user".to_string())
         );
+    }
+
+    // --- path traversal (milestone 28's security pass) ---------------
+
+    #[test]
+    fn a_table_name_with_a_path_separator_is_rejected() {
+        let scratch = ScratchDir::new("traversal_slash");
+        let err = insert(&scratch.path, "../evil", "1", "x", span()).unwrap_err();
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+        assert!(!scratch.path.parent().unwrap().join("evil.jsonl").exists());
+    }
+
+    #[test]
+    fn a_table_name_with_a_backslash_is_rejected() {
+        let scratch = ScratchDir::new("traversal_backslash");
+        let err = insert(&scratch.path, "a\\b", "1", "x", span()).unwrap_err();
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn an_absolute_path_as_a_table_name_is_rejected() {
+        let scratch = ScratchDir::new("traversal_absolute");
+        let err = get(&scratch.path, "/etc/passwd", "1", span()).unwrap_err();
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn an_empty_table_name_is_rejected() {
+        let scratch = ScratchDir::new("empty_table");
+        let err = list(&scratch.path, "", span()).unwrap_err();
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn ordinary_table_names_with_hyphens_and_underscores_are_accepted() {
+        let scratch = ScratchDir::new("normal_names");
+        assert!(insert(&scratch.path, "user-sessions_v2", "1", "x", span()).unwrap());
     }
 }

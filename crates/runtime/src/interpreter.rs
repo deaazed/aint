@@ -1139,7 +1139,18 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     .await;
                 }
                 Err(err) => {
-                    let _ = write_http_response(&mut stream, 500, &err.to_string()).await;
+                    // The full error (which may echo back request
+                    // content, internal state, or a file path - see
+                    // `RuntimeError`'s `Display` impls) goes to the
+                    // server's own log, not the client. Sending it
+                    // straight into the response body was a real
+                    // information-disclosure gap, found and fixed in
+                    // this milestone's security pass - the same
+                    // conservative default FastAPI/Starlette already
+                    // apply to unhandled exceptions. See
+                    // `docs/milestones/28-production-language/SPEC.md`.
+                    eprintln!("[http_serve] request failed: {err}");
+                    let _ = write_http_response(&mut stream, 500, "internal server error").await;
                 }
             }
         }

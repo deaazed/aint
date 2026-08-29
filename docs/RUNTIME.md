@@ -1,5 +1,19 @@
 # AINT — Runtime
 
+**Historical design sketch, written before implementation began —
+kept for its structural ideas, not as a syntax reference.** Several
+examples below don't match what was actually built: tool names here
+use dotted syntax (`database.lookup_customer`), which the language
+ended up rejecting entirely (`database_get_email`-style naming
+instead); `mock` here shows a rich distribution-literal shape, while
+the real `mock` (milestone 15) only accepts literals and
+`EnumName_Variant` references; the `model { }` block and deployment
+profiles (`fast`/`cheap`/`balanced`/...) were never built — model
+selection is `AINT_MODEL_URL`/`AINT_MODEL_NAME` (milestone 25); there
+is no `aint trace` subcommand. **`docs/SPECIFICATION.md` (milestone
+28) is the accurate, current reference** — read that for how any of
+this actually works today.
+
 How inference, tools, tracing, and testing actually work at runtime.
 Read `LANGUAGE_DESIGN.md` and `ARCHITECTURE.md` first.
 

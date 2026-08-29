@@ -182,7 +182,7 @@ answer becomes the language's real thesis statement, replacing the
 working hypothesis in `LANGUAGE_DESIGN.md` if it turns out to be
 different.
 
-## 28 — Production language
+## 28 — Production language — done
 
 Native compilation path, optimized runtime, package ecosystem, stable
 specification, backward compatibility policy, security audit,
