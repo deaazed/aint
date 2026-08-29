@@ -3,6 +3,8 @@
   "displayName": "AINT",
   "description": "Syntax highlighting and language configuration for AINT (.an files).",
   "version": "0.1.0",
+  "publisher": "aint-lang",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.75.0"
   },
