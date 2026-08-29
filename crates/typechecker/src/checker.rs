@@ -587,6 +587,16 @@ impl TypeChecker {
                     }),
                 }
             }
+            // Always resolved and eliminated by `aint-loader` before a
+            // program reaches the type checker — reachable only by
+            // calling `check_program` directly on unresolved source,
+            // bypassing the loader. See
+            // `docs/milestones/29-modularity/SPEC.md`.
+            StmtKind::ImportFile { .. } => Err(TypeError::Mismatch {
+                message: "cross-file imports must be resolved by aint-loader before type-checking"
+                    .to_string(),
+                span: stmt.span,
+            }),
         }
     }
 

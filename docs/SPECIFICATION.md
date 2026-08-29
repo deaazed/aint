@@ -173,13 +173,25 @@ code (`await my_tool(args)`), or requested by a model mid-inference
 
 ```
 import module_name
+import "path/to/file.an" as alias
 ```
 
-Binds every native function a stdlib module provides into the current
-scope. See §9 for the full module list. There is no way to `import`
-another `.an` file — every `import` target is one of the fixed stdlib
-module names. A user-authored multi-file program does not exist in
-AINT today; see §11.
+The bare-identifier form binds every native function a stdlib module
+provides into the current scope — see §9 for the full module list.
+
+The string-literal form (milestone 29) imports another `.an` file,
+relative to the importing file's own directory. Every top-level
+declaration in the imported file — `fn`, `enum` (and its
+`EnumName_Variant` identifiers), `tool`, `infer` — becomes available
+under `alias_name`. Resolution happens entirely before type-checking,
+in a separate `aint-loader` crate: the whole import graph is flattened
+into one ordinary `Program` first, so the type checker, interpreter, IR
+compiler, and VM never know a program came from more than one file. A
+file reached through `import "..." as ...` may only itself contain
+`fn`/`enum`/`tool`/`infer`/`import` at its top level — no `let`, no
+`test`, no bare statement that would fire as a side effect just because
+the file was imported. See
+`docs/milestones/29-modularity/SPEC.md`.
 
 ### 4.9 `test` / `mock` / `assert` / `budget`
 
@@ -353,9 +365,17 @@ Stated here so they're findable in one place, not scattered across 20
 milestones' `SPEC.md` files (though each is documented in full where
 it was found):
 
-- **No cross-file `import`.** Every AINT program is one file.
-  (`docs/milestones/23-package-manager/SPEC.md`,
-  `docs/milestones/25-real-application/SPEC.md`)
+- **No diamond imports.** `import "path" as alias` (milestone 29)
+  resolves multi-file programs, but the same file may only be imported
+  from exactly one place in the whole program — a second import of the
+  same file anywhere else in the graph is a clear
+  `aint-loader::LoadError::DuplicateImport`, not a silent second copy.
+  (`docs/milestones/29-modularity/SPEC.md`)
+- **Cross-file error positions are approximate.** An error inside code
+  spliced in from an imported file is reported against the *entry*
+  file's path, with a line/column that's actually relative to the
+  imported file's own source — `Span` carries no file identity yet.
+  (same)
 - **No `Option<T>`/`Distribution<T>` construction syntax** — only
   specific natives produce them. (§5,
   `docs/milestones/25-real-application/SPEC.md`)

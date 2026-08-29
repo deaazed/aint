@@ -19,6 +19,12 @@ pub enum LowerError {
     /// type checker already guarantees arity for anything that
     /// type-checked.
     ArityMismatch { function: String, span: Span },
+    /// A cross-file `import "path" as alias` reached IR lowering
+    /// unresolved. Same reasoning as `UnsupportedCallee` — `aint-loader`
+    /// always eliminates this before a program reaches `check_program`,
+    /// which `lower` requires has already run. See
+    /// `docs/milestones/29-modularity/SPEC.md`.
+    UnresolvedImport { span: Span },
 }
 
 /// Lowers an entire program. Expects `program` to already be
@@ -105,6 +111,7 @@ impl Lowerer {
             }),
             StmtKind::Return(value) => Ok(AirStmt::Return(self.lower_expr(value)?)),
             StmtKind::Import(module) => Ok(AirStmt::Import(module.clone())),
+            StmtKind::ImportFile { .. } => Err(LowerError::UnresolvedImport { span: stmt.span }),
             StmtKind::Infer { name, params, .. } => Ok(AirStmt::Infer {
                 name: name.clone(),
                 params: params.iter().map(|param| param.name.clone()).collect(),

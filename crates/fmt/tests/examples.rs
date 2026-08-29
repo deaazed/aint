@@ -147,6 +147,16 @@ fn stmt_eq(a: &Stmt, b: &Stmt) -> bool {
         (StmtKind::Return(e1), StmtKind::Return(e2)) => expr_eq(e1, e2),
         (StmtKind::Import(m1), StmtKind::Import(m2)) => m1 == m2,
         (
+            StmtKind::ImportFile {
+                path: p1,
+                alias: a1,
+            },
+            StmtKind::ImportFile {
+                path: p2,
+                alias: a2,
+            },
+        ) => p1 == p2 && a1 == a2,
+        (
             StmtKind::Infer {
                 name: n1,
                 params: p1,

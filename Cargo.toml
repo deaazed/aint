@@ -9,6 +9,7 @@ members = [
     "crates/runtime",
     "crates/vm",
     "crates/package",
+    "crates/loader",
     "crates/fmt",
     "crates/cli",
 ]

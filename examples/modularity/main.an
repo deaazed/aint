@@ -1,0 +1,18 @@
+import "./util.an" as util
+
+fn main() -> Unit {
+    print(util_greeting("world"))
+    assert util_is_done(util_Status_Done) == true
+    assert util_is_done(util_Status_Active) == false
+    assert util_fibonacci(10) == 55
+    print("fibonacci(10), is_done, and greeting all resolved correctly across files")
+}
+
+main()
+
+test "imported declarations behave exactly as their local equivalents would" {
+    assert util_greeting("Ada") == "Hi Ada"
+    assert util_is_done(util_Status_Done) == true
+    assert util_is_done(util_Status_Active) == false
+    assert util_fibonacci(10) == 55
+}

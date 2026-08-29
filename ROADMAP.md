@@ -190,6 +190,52 @@ performance work. This is 1.0.
 
 ---
 
+## Phase 2 — beyond 1.0
+
+1.0 (milestones 0–28) proved the governance thesis on a single-file
+application. What it didn't prove: that AINT is a comfortable language
+to build a real, multi-file, growing project in — the thing a framework
+or a genuine web application actually needs. Phase 2 targets that
+directly: modularity, passing behavior around as a value, a web layer
+that doesn't fight the language, and AI-assisted scaffolding, in that
+order, each still gated the same way 0–28 were.
+
+## 29 — Modularity — done
+
+`import "path" as alias`: one AINT program spanning more than one file,
+for the first time. A new `aint-loader` crate resolves the whole import
+graph into one flat program before the type checker, interpreter, IR
+compiler, or VM ever see it — none of those four crates change in any
+way that matters. See `docs/milestones/29-modularity/SPEC.md`.
+
+## 30 — Closures
+
+Functions as values — passed as arguments, returned, stored in a
+`List<T>`. The minimum lever needed to express strategy/observer/
+dependency-injection-style patterns without generics or structs, which
+stay out of scope. Interpreter-only; the bytecode VM and IR compiler
+reject a closure explicitly rather than miscompiling one.
+
+## 31 — Web framework ergonomics
+
+A route table and reusable page composition, replacing hand-nested
+`if`/`else` and manual `string_concat` chains, built on 29 and 30 —
+no further core-language changes.
+
+## 32 — AI-assisted scaffolding
+
+`aint scaffold`: dogfoods AINT's own model-adapter machinery to
+generate a starter multi-file project from a plain-English description,
+checked before it's ever shown to you.
+
+## 33 — Rebuild the language's own website
+
+`examples/website/` rebuilt on 29–31, as the real, shipped proof —
+same reasoning milestones 25/26 used: if AINT can't comfortably build
+this, the abstractions aren't right yet.
+
+---
+
 ## Known hard problems, by category
 
 Worth keeping visible rather than discovering mid-milestone:

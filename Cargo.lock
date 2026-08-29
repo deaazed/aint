@@ -10,8 +10,8 @@ dependencies = [
  "aint-fmt",
  "aint-ir",
  "aint-lexer",
+ "aint-loader",
  "aint-package",
- "aint-parser",
  "aint-runtime",
  "aint-typechecker",
  "aint-vm",
@@ -45,6 +45,14 @@ name = "aint-lexer"
 version = "0.1.0"
 dependencies = [
  "aint-ast",
+]
+
+[[package]]
+name = "aint-loader"
+version = "0.1.0"
+dependencies = [
+ "aint-ast",
+ "aint-parser",
 ]
 
 [[package]]

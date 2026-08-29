@@ -87,10 +87,12 @@ stdlib covering math/string/time/collections, `Distribution<T>`/
 `Option<T>` operations, and — since milestone 25 — real JSON, a
 file-backed database, password hashing, logging, and a hand-rolled
 HTTP/1.1 server, enough to build and run a real HTTP API entirely in
-AINT (`examples/customer_support/`).
+AINT (`examples/customer_support/`); and, since milestone 29,
+`import "path" as alias` — a real AINT program can span more than one
+file.
 
 What's deliberately not here yet: native compilation, a hosted
-package registry, cross-file `import`, and an LSP beyond syntax
+package registry, diamond-shared imports, and an LSP beyond syntax
 highlighting — each named directly, with the reason, in
 `docs/SPECIFICATION.md`'s "known gaps" and `docs/ARCHITECTURE.md`'s
 "what's still deliberately not built."

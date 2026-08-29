@@ -74,6 +74,8 @@ crates/
 ├── ast/            aint-ast          shared AST types, no logic
 ├── lexer/          aint-lexer        source text -> tokens
 ├── parser/         aint-parser       tokens -> AST
+├── loader/         aint-loader       resolves cross-file `import "path" as alias`
+│                                     into one flat AST (milestone 29)
 ├── typechecker/    aint-typechecker  AST -> typed AST
 ├── ir/             aint-ir           typed AST -> AIR, AIR-to-AIR optimization
 ├── runtime/        aint-runtime      tree-walk interpreter, model adapters, tools,

@@ -1,0 +1,18 @@
+import string
+
+enum Status { Active Done }
+
+fn greeting(name: String) -> String effects [pure] {
+    return string_concat("Hi ", name)
+}
+
+fn is_done(status: Status) -> Bool effects [pure] {
+    return status == Status_Done
+}
+
+fn fibonacci(n: Int) -> Int effects [pure] {
+    if n < 2 {
+        return n
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}

@@ -30,6 +30,10 @@ pub enum TokenKind {
     Assert,
     Budget,
     Permissions,
+    /// `as`: only meaningful after `import "path"` (milestone 29) —
+    /// see `docs/milestones/29-modularity/SPEC.md`. Not reserved
+    /// anywhere else in the grammar.
+    As,
 
     // Operators
     Plus,
@@ -82,6 +86,7 @@ impl fmt::Display for TokenKind {
             TokenKind::Assert => write!(f, "`assert`"),
             TokenKind::Budget => write!(f, "`budget`"),
             TokenKind::Permissions => write!(f, "`permissions`"),
+            TokenKind::As => write!(f, "`as`"),
             TokenKind::Plus => write!(f, "`+`"),
             TokenKind::Minus => write!(f, "`-`"),
             TokenKind::Star => write!(f, "`*`"),
@@ -139,6 +144,7 @@ pub(crate) fn keyword(word: &str) -> Option<TokenKind> {
         "assert" => TokenKind::Assert,
         "budget" => TokenKind::Budget,
         "permissions" => TokenKind::Permissions,
+        "as" => TokenKind::As,
         _ => return None,
     })
 }

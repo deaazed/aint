@@ -41,6 +41,17 @@ pub enum StmtKind {
     },
     Return(Expr),
     Import(String),
+    /// `import "path" as alias` (milestone 29) — a cross-file import,
+    /// distinct from `Import`'s fixed-stdlib-name form. Always fully
+    /// resolved and eliminated by `aint-loader` before any other crate
+    /// (typechecker, interpreter, IR, VM) ever sees the program; those
+    /// crates each keep exactly one defensive match arm for this
+    /// variant, reachable only by bypassing the loader entirely. See
+    /// `docs/milestones/29-modularity/SPEC.md`.
+    ImportFile {
+        path: String,
+        alias: String,
+    },
     /// A signature-only declaration: `infer name(params) -> Type`, no
     /// body. The implementation is external (a model), not AINT source
     /// — see `docs/milestones/08-first-ai-primitive/SPEC.md` for why

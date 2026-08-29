@@ -115,17 +115,14 @@ fn main() -> ExitCode {
         .expect("the interpreter thread panicked")
 }
 
-/// Reads, parses, and type-checks `path` — the first three steps
-/// `run` and `test` both need, and both report failures in it
-/// identically.
+/// Reads, resolves cross-file imports, parses, and type-checks `path` —
+/// the steps `run` and `test` both need, and both report failures in
+/// identically. `aint-loader` (milestone 29) does the read/parse/import
+/// resolution in one step, folding every `import "path" as alias` it
+/// reaches into one flat `Program` before the type checker ever sees it.
 fn parse_and_check(path: &Path) -> Result<Program, ExitCode> {
-    let source = fs::read_to_string(path).map_err(|err| {
-        eprintln!("error: could not read {}: {err}", path.display());
-        ExitCode::FAILURE
-    })?;
-
-    let program = aint_parser::parse_source(&source).map_err(|err| {
-        eprintln!("{}:{}", path.display(), err);
+    let program = aint_loader::load(path).map_err(|err| {
+        eprintln!("error: {err}");
         ExitCode::FAILURE
     })?;
 

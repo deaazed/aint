@@ -362,6 +362,13 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     span: stmt.span,
                 }),
             },
+            // See the matching arm in `aint-typechecker`'s
+            // `checker.rs` — always eliminated by `aint-loader` first.
+            StmtKind::ImportFile { .. } => Err(RuntimeError::TypeMismatch {
+                message: "cross-file imports must be resolved by aint-loader before running"
+                    .to_string(),
+                span: stmt.span,
+            }),
         }
     }
 

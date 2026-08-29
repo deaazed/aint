@@ -203,6 +203,12 @@ impl Printer {
                 self.out.push_str("import ");
                 self.out.push_str(module);
             }
+            StmtKind::ImportFile { path, alias } => {
+                self.out.push_str("import \"");
+                self.out.push_str(path);
+                self.out.push_str("\" as ");
+                self.out.push_str(alias);
+            }
             StmtKind::Infer {
                 name,
                 params,

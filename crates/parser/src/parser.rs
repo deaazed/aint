@@ -244,6 +244,17 @@ impl Parser {
 
     fn parse_import_statement(&mut self) -> Result<Stmt, ParseError> {
         let import_token = self.expect(TokenKind::Import, "`import`")?;
+        if let TokenKind::String(_) = self.current().kind {
+            let path_token = self.advance();
+            let path = match path_token.kind {
+                TokenKind::String(s) => s,
+                _ => unreachable!("just matched TokenKind::String above"),
+            };
+            self.expect(TokenKind::As, "`as`")?;
+            let (alias, alias_span) = self.expect_identifier()?;
+            let span = Span::new(import_token.span.start, alias_span.end);
+            return Ok(Stmt::new(StmtKind::ImportFile { path, alias }, span));
+        }
         let (module, module_span) = self.expect_identifier()?;
         let span = Span::new(import_token.span.start, module_span.end);
         Ok(Stmt::new(StmtKind::Import(module), span))
@@ -1403,6 +1414,18 @@ mod tests {
         match stmt.kind {
             StmtKind::Import(module) => assert_eq!(module, "math"),
             other => panic!("expected Import, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_import_file_statement() {
+        let stmt = parse_one_stmt("import \"./util.an\" as util");
+        match stmt.kind {
+            StmtKind::ImportFile { path, alias } => {
+                assert_eq!(path, "./util.an");
+                assert_eq!(alias, "util");
+            }
+            other => panic!("expected ImportFile, got {other:?}"),
         }
     }
 
