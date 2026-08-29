@@ -1107,10 +1107,11 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             let (method, path, body) = match read_http_request(&mut stream).await {
                 Ok(parsed) => parsed,
                 Err(_) => {
-                    let _ = write_http_response(&mut stream, 400, "").await;
+                    let _ = write_http_response(&mut stream, 400, "", "").await;
                     continue;
                 }
             };
+            let response_path = path.clone();
 
             let args = vec![
                 Value::String(method),
@@ -1125,12 +1126,14 @@ impl<W: Write, M: Model> Interpreter<W, M> {
 
             match result {
                 Ok(Value::String(response_body)) => {
-                    let _ = write_http_response(&mut stream, 200, &response_body).await;
+                    let _ =
+                        write_http_response(&mut stream, 200, &response_path, &response_body).await;
                 }
                 Ok(other) => {
                     let _ = write_http_response(
                         &mut stream,
                         500,
+                        &response_path,
                         &format!(
                             "handle_request must return a String, returned a {}",
                             other.type_name()
@@ -1150,7 +1153,13 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     // apply to unhandled exceptions. See
                     // `docs/milestones/28-production-language/SPEC.md`.
                     eprintln!("[http_serve] request failed: {err}");
-                    let _ = write_http_response(&mut stream, 500, "internal server error").await;
+                    let _ = write_http_response(
+                        &mut stream,
+                        500,
+                        &response_path,
+                        "internal server error",
+                    )
+                    .await;
                 }
             }
         }
@@ -1217,6 +1226,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 async fn write_http_response(
     stream: &mut TcpStream,
     status: u16,
+    path: &str,
     body: &str,
 ) -> Result<(), String> {
     let status_text = match status {
@@ -1224,14 +1234,101 @@ async fn write_http_response(
         400 => "Bad Request",
         _ => "Internal Server Error",
     };
+    let content_type = content_type_for(path, body);
     let response = format!(
-        "HTTP/1.1 {status} {status_text}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream
         .write_all(response.as_bytes())
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Picks a response `Content-Type` — first by `path`'s file extension
+/// (the request path a static-asset route like `/style.css` or
+/// `/app.js` would naturally use), then, for anything unrecognized
+/// (an extensionless route like `/` or `/about`, exactly what a page
+/// route looks like), by sniffing whether `body` looks like markup.
+/// Defaults to `application/json` — the one and only content type
+/// this ever sent before this check existed, so every existing
+/// JSON-API-shaped `handle_request` (`examples/customer_support/`'s
+/// among them) keeps exactly the response it always got. Added
+/// because `http_serve` couldn't actually serve a webpage before this:
+/// a browser won't render a `text/html` document that arrives labeled
+/// `application/json`, which was the only label this ever sent.
+fn content_type_for(path: &str, body: &str) -> &'static str {
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let extension = file_name.rsplit_once('.').map(|(_, ext)| ext);
+    match extension {
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ if body.trim_start().starts_with('<') => "text/html; charset=utf-8",
+        _ => "application/json",
+    }
+}
+
+#[cfg(test)]
+mod content_type_tests {
+    use super::content_type_for;
+
+    #[test]
+    fn a_json_api_route_with_no_extension_and_an_object_body_stays_json() {
+        assert_eq!(
+            content_type_for("/register", "{\"user_id\":\"1\"}"),
+            "application/json"
+        );
+    }
+
+    #[test]
+    fn an_extensionless_route_returning_markup_is_sniffed_as_html() {
+        assert_eq!(
+            content_type_for("/", "<!doctype html><html></html>"),
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for("/about", "  <html></html>"),
+            "text/html; charset=utf-8"
+        );
+    }
+
+    #[test]
+    fn known_static_asset_extensions_are_recognized_by_path_alone() {
+        assert_eq!(
+            content_type_for("/style.css", "body { color: red; }"),
+            "text/css; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for("/app.js", "console.log(1)"),
+            "text/javascript; charset=utf-8"
+        );
+        assert_eq!(
+            content_type_for("/icon.svg", "<svg></svg>"),
+            "image/svg+xml"
+        );
+    }
+
+    #[test]
+    fn an_unknown_extension_falls_back_to_body_sniffing() {
+        assert_eq!(
+            content_type_for("/data.xyz", "{\"a\":1}"),
+            "application/json"
+        );
+        assert_eq!(
+            content_type_for("/data.xyz", "<xyz/>"),
+            "text/html; charset=utf-8"
+        );
+    }
+
+    #[test]
+    fn a_malformed_request_with_an_empty_path_and_body_defaults_to_json() {
+        assert_eq!(content_type_for("", ""), "application/json");
+    }
 }
 
 /// Checks a runtime `Value` against a declared `Type` — the first
