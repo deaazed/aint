@@ -95,3 +95,16 @@ suggestion:
   milestones' end-to-end tests.
 - `tests/` — whole-program tests that run actual `.an` files through the
   real `aint` binary.
+
+## Live verification against a real model
+
+`cargo test`/`aint test` stay mocked, always — see principle 5 above.
+For manually verifying `infer`/`tool`/`aint scaffold` work end to end
+against a real backend (not part of the automated suite, and not run
+by CI), the project's own convention is Mistral's API, over the same
+`AINT_MODEL_URL`/`AINT_MODEL_NAME`/`AINT_MODEL_API_KEY` variables `aint
+run` already reads. Copy `.env.example` to `.env` (gitignored — never
+committed) and fill in a real key, or export the three directly. Any
+other OpenAI-compatible endpoint (vLLM, Ollama, OpenAI itself) works
+the same way; Mistral is just the one this project verifies against by
+default.
