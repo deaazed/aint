@@ -1,0 +1,50 @@
+// Tests router.an's dispatch and query-parsing logic directly, with
+// no server involved - the same split `examples/customer_support/`
+// uses (`priority_logic_test.an` vs. `server.an`) and for the same
+// reason: `aint test` re-runs every non-test statement before each
+// test body, which would re-run a blocking `await http_serve(...)`
+// and hang forever if this file also had to start one.
+import "./router.an" as router
+
+fn home(method: String, path: String, body: String) -> String {
+    return "home"
+}
+
+fn about(method: String, path: String, body: String) -> String {
+    return "about"
+}
+
+fn echo_body(method: String, path: String, body: String) -> String {
+    return body
+}
+
+fn not_found(method: String, path: String, body: String) -> String {
+    return "404"
+}
+
+test "the route table dispatches to the matching handler" {
+    assert router_route(["/", "/about"], [home, about], "GET", "/", "", not_found) == "home"
+    assert router_route(["/", "/about"], [home, about], "GET", "/about", "", not_found) == "about"
+}
+
+test "an unmatched path falls through to not_found" {
+    assert router_route(["/", "/about"], [home, about], "GET", "/nope", "", not_found) == "404"
+}
+
+test "a query string does not prevent the route from matching" {
+    assert router_route(["/", "/about"], [home, about], "GET", "/about?ref=home", "", not_found) == "about"
+}
+
+test "handlers still receive the full path, query string included" {
+    assert router_route(["/echo"], [echo_body], "POST", "/echo", "hi", not_found) == "hi"
+}
+
+test "query_param reads a value out of the query string" {
+    assert router_query_param("/greet?name=Ada", "name") == "Ada"
+    assert router_query_param("/greet?name=Ada&loud=true", "loud") == "true"
+}
+
+test "query_param on a missing key or no query string is empty" {
+    assert router_query_param("/greet?name=Ada", "nope") == ""
+    assert router_query_param("/greet", "name") == ""
+}

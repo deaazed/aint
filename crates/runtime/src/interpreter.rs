@@ -1745,6 +1745,28 @@ mod tests {
     }
 
     #[test]
+    fn string_split_splits_on_every_occurrence() {
+        assert_eq!(
+            run_capturing(
+                "import string\n\
+                 let parts = string_split(\"a=1&b=2&c=3\", \"&\")\n\
+                 print(parts[0])\n\
+                 print(parts[1])\n\
+                 print(parts[2])"
+            ),
+            "a=1\nb=2\nc=3\n"
+        );
+    }
+
+    #[test]
+    fn string_split_on_an_absent_separator_yields_one_element() {
+        assert_eq!(
+            run_capturing("import string\nprint(string_split(\"hello\", \",\")[0])"),
+            "hello\n"
+        );
+    }
+
+    #[test]
     fn time_now_seconds_returns_a_plausible_timestamp() {
         assert_eq!(
             run_capturing("import time\nprint(time_now_seconds() > 1700000000)"),

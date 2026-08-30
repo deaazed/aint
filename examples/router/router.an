@@ -1,0 +1,66 @@
+import string
+import collections
+
+// A flat route table: register `paths[i]` against `handlers[i]`
+// (i-th handler gets `(method, full_path, body) -> response`), instead
+// of a hand-nested `if`/`else` pyramid. `full_path` may carry a
+// `?query` string - it's stripped before matching, but handlers still
+// receive it whole (see `query_param`).
+fn route(paths: List<String>, handlers: List<fn(String, String, String) -> String>, method: String, full_path: String, body: String, not_found: fn(String, String, String) -> String) -> String {
+    let clean_path = string_split(full_path, "?")[0]
+    return dispatch(paths, handlers, 0, clean_path, method, full_path, body, not_found)
+}
+
+fn dispatch(paths: List<String>, handlers: List<fn(String, String, String) -> String>, index: Int, clean_path: String, method: String, full_path: String, body: String, not_found: fn(String, String, String) -> String) -> String {
+    if index < collections_length(paths) {
+        if paths[index] == clean_path {
+            return handlers[index](method, full_path, body)
+        } else {
+            return dispatch(paths, handlers, index + 1, clean_path, method, full_path, body, not_found)
+        }
+    } else {
+        return not_found(method, full_path, body)
+    }
+}
+
+// The query string portion of `full_path` (after `?`), or `""` if
+// there isn't one.
+fn query_string(full_path: String) -> String {
+    let parts = string_split(full_path, "?")
+    if collections_length(parts) < 2 {
+        return ""
+    } else {
+        return parts[1]
+    }
+}
+
+// The value for `key` in `full_path`'s query string, or `""` if
+// absent - not `Option<String>`, since AINT still has no construction
+// syntax for it; the same sentinel-empty-string pattern
+// examples/customer_support/server.an's own `field()` helper uses,
+// for the same reason.
+fn query_param(full_path: String, key: String) -> String {
+    let query = query_string(full_path)
+    if query == "" {
+        return ""
+    } else {
+        return find_param(string_split(query, "&"), 0, key)
+    }
+}
+
+fn find_param(pairs: List<String>, index: Int, key: String) -> String {
+    if index < collections_length(pairs) {
+        let kv = string_split(pairs[index], "=")
+        if collections_length(kv) == 2 {
+            if kv[0] == key {
+                return kv[1]
+            } else {
+                return find_param(pairs, index + 1, key)
+            }
+        } else {
+            return find_param(pairs, index + 1, key)
+        }
+    } else {
+        return ""
+    }
+}

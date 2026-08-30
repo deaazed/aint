@@ -118,8 +118,12 @@ cargo build --release
 ```
 
 `examples/` has more — `enums.an`, `stdlib.an`, `async.an`,
-`security.an`, and `customer_support/` (a full HTTP API: `aint run
-examples/customer_support/server.an`, then `curl` it).
+`security.an`, `closures.an`, `modularity/` (a program split across
+two files), `customer_support/` (a full HTTP API: `aint run
+examples/customer_support/server.an`, then `curl` it), and `router/`
+(a real, importable route table built entirely out of `import` and
+closures — no framework-shaped stdlib additions required: `aint run
+examples/router/demo.an`, then `curl`).
 
 ## License
 

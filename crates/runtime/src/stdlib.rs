@@ -48,6 +48,7 @@ pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction
             ("string_trim", NativeFunction::StringTrim),
             ("string_contains", NativeFunction::StringContains),
             ("string_concat", NativeFunction::StringConcat),
+            ("string_split", NativeFunction::StringSplit),
         ]),
         "time" => Some(vec![
             ("time_now_seconds", NativeFunction::TimeNowSeconds),
@@ -171,6 +172,19 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
                 string(&a, span)?,
                 string(&b, span)?
             )))
+        }
+        NativeFunction::StringSplit => {
+            let [s, sep] = two(native, args, span)?;
+            let s = string(&s, span)?;
+            let sep = string(&sep, span)?;
+            let parts: Vec<Value> = if sep.is_empty() {
+                vec![Value::String(s.to_string())]
+            } else {
+                s.split(sep)
+                    .map(|part| Value::String(part.to_string()))
+                    .collect()
+            };
+            Ok(Value::List(parts))
         }
         NativeFunction::TimeNowSeconds => {
             let [] = zero(native, args, span)?;

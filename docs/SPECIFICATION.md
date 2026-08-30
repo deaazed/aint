@@ -364,7 +364,7 @@ ungated.
 | Module | Functions |
 |---|---|
 | `math` | `math_sqrt`, `math_pow`, `math_floor`, `math_ceil`, `math_round`, `math_abs`, `math_min`, `math_max` |
-| `string` | `string_length`, `string_to_upper`, `string_to_lower`, `string_trim`, `string_contains`, `string_concat` |
+| `string` | `string_length`, `string_to_upper`, `string_to_lower`, `string_trim`, `string_contains`, `string_concat`, `string_split(s, sep) -> List<String>` (milestone 31) |
 | `time` | `time_now_seconds`, `time_sleep_ms` (async — the one async native before milestone 25) |
 | `collections` | `collections_length` (polymorphic over `List<T>`) |
 | `distribution` | `distribution_probability`, `distribution_argmax`, `distribution_entropy`, `distribution_sample`, `distribution_require_confidence` |

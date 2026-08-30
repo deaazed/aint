@@ -217,11 +217,14 @@ stay out of scope. Interpreter-only; the bytecode VM and IR compiler
 reject a closure explicitly rather than miscompiling one. See
 `docs/milestones/30-closures/SPEC.md`.
 
-## 31 — Web framework ergonomics
+## 31 — Web framework ergonomics — done
 
-A route table and reusable page composition, replacing hand-nested
-`if`/`else` and manual `string_concat` chains, built on 29 and 30 —
-no further core-language changes.
+A route table, built entirely in AINT source on top of 29 and 30 — no
+new framework-shaped stdlib surface, just one new primitive
+(`string_split`) and a real, importable library
+(`examples/router/router.an`) replacing the hand-nested `if`/`else`
+pyramid every HTTP example had before this. See
+`docs/milestones/31-web-ergonomics/SPEC.md`.
 
 ## 32 — AI-assisted scaffolding
 

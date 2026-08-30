@@ -1,0 +1,45 @@
+// A flat route table, registered once, instead of a hand-nested
+// if/else pyramid - the pain examples/website/site.an's own
+// handle_request (7 levels deep for 7 routes) and
+// examples/customer_support/server.an's (5 levels for 5) both had no
+// way around before milestones 29 (modularity) and 30 (closures).
+import "./router.an" as router
+import string
+import http
+
+fn home(method: String, path: String, body: String) -> String {
+    return "<!doctype html><html><body><h1>home</h1></body></html>"
+}
+
+fn about(method: String, path: String, body: String) -> String {
+    return "<!doctype html><html><body><h1>about</h1></body></html>"
+}
+
+fn greet(method: String, path: String, body: String) -> String {
+    let name = router_query_param(path, "name")
+    if name == "" {
+        return "<!doctype html><html><body><h1>hello, stranger</h1></body></html>"
+    } else {
+        return string_concat(
+            "<!doctype html><html><body><h1>hello, ",
+            string_concat(name, "</h1></body></html>")
+        )
+    }
+}
+
+fn not_found(method: String, path: String, body: String) -> String {
+    return "<!doctype html><html><body><p>404 - nothing here</p></body></html>"
+}
+
+fn handle_request(method: String, path: String, body: String) -> String {
+    return router_route(
+        ["/", "/about", "/greet"],
+        [home, about, greet],
+        method,
+        path,
+        body,
+        not_found
+    )
+}
+
+await http_serve(8080)

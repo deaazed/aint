@@ -1388,6 +1388,14 @@ mod tests {
     }
 
     #[test]
+    fn string_split_returns_a_list_of_string() {
+        assert!(check(
+            "import string\nimport collections\nlet parts = string_split(\"a,b\", \",\")\nprint(collections_length(parts))"
+        )
+        .is_ok());
+    }
+
+    #[test]
     fn stdlib_function_still_checks_argument_types() {
         let err = check("import math\nmath_sqrt(\"x\")").unwrap_err();
         assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));

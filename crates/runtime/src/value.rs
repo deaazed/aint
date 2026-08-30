@@ -184,6 +184,13 @@ pub enum NativeFunction {
     StringTrim,
     StringContains,
     StringConcat,
+    /// Splits on every occurrence of a separator (milestone 31) —
+    /// the one primitive AINT was missing to write its own
+    /// query-string/form-body/route parsing in source, rather than
+    /// needing a dedicated native per parsing need. A separator that
+    /// doesn't occur yields a one-element list (the whole string), same
+    /// as `str::split` in the standard libraries this mirrors.
+    StringSplit,
     TimeNowSeconds,
     /// The one genuinely asynchronous native function (milestone 07),
     /// chosen as the simplest possible thing that actually suspends —
@@ -306,6 +313,7 @@ impl NativeFunction {
             NativeFunction::StringTrim => "string_trim",
             NativeFunction::StringContains => "string_contains",
             NativeFunction::StringConcat => "string_concat",
+            NativeFunction::StringSplit => "string_split",
             NativeFunction::TimeNowSeconds => "time_now_seconds",
             NativeFunction::TimeSleepMs => "time_sleep_ms",
             NativeFunction::CollectionsLength => "collections_length",

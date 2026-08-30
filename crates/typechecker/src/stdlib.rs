@@ -49,6 +49,11 @@ pub(crate) fn module_functions(module: &str) -> Option<Vec<(&'static str, Signat
                 vec![Type::String, Type::String],
                 Type::String,
             ),
+            sig(
+                "string_split",
+                vec![Type::String, Type::String],
+                Type::List(Box::new(Type::String)),
+            ),
         ]),
         "time" => Some(vec![
             sig("time_now_seconds", vec![], Type::Int),
