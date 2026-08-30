@@ -226,11 +226,13 @@ new framework-shaped stdlib surface, just one new primitive
 pyramid every HTTP example had before this. See
 `docs/milestones/31-web-ergonomics/SPEC.md`.
 
-## 32 — AI-assisted scaffolding
+## 32 — AI-assisted scaffolding — done
 
-`aint scaffold`: dogfoods AINT's own model-adapter machinery to
-generate a starter multi-file project from a plain-English description,
-checked before it's ever shown to you.
+`aint scaffold "description" <path>`: dogfoods AINT's own
+model-adapter machinery (a new `ChatClient`, alongside `HttpModel`) to
+generate a starter project from a plain-English description, always
+run through the same check `aint check` uses before being reported as
+done. See `docs/milestones/32-ai-scaffolding/SPEC.md`.
 
 ## 33 — Rebuild the language's own website
 

@@ -85,6 +85,18 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Scaffold a new AINT project from a plain-English description,
+    /// using the same model backend `aint run` does — requires
+    /// `AINT_MODEL_URL`. One-shot: creates a new project, doesn't edit
+    /// an existing one. Generated code is always run through the same
+    /// gate `aint check` uses before being reported as done — see
+    /// docs/milestones/32-ai-scaffolding/SPEC.md.
+    Scaffold {
+        /// A plain-English description of the program to generate.
+        description: String,
+        /// Directory to create the new package in.
+        path: PathBuf,
+    },
 }
 
 /// AINT's only iteration mechanism is recursion — there are no loops —
@@ -109,6 +121,7 @@ fn main() -> ExitCode {
             Command::Add { path } => add(&path),
             Command::Check { path } => check(&path),
             Command::Fmt { path, check } => fmt(&path, check),
+            Command::Scaffold { description, path } => scaffold(&description, &path),
         })
         .expect("failed to spawn the interpreter thread")
         .join()
@@ -417,4 +430,155 @@ fn add(dep_path: &Path) -> ExitCode {
 
     println!("added `{name}` (path: {})", dep_path.display());
     ExitCode::SUCCESS
+}
+
+/// A condensed, accurate reference for AINT's actual syntax — every
+/// rule here is something a real `.an` file in this repository does,
+/// not a guess at what the language might support. Kept in the CLI
+/// rather than generated from `docs/SPECIFICATION.md` — that document
+/// is the exhaustive reference; this is deliberately the smallest
+/// version that still keeps a model from inventing syntax (loops,
+/// `Option` construction, dotted access) AINT doesn't have.
+const SCAFFOLD_SYSTEM_PROMPT: &str = r#"You generate AINT source code. AINT is a statically-typed language. Follow these rules exactly - do not use any syntax not listed here.
+
+Types: Int, Float, Bool, String, Unit, List<T>, Option<T>, and user-declared enums.
+Bindings: `let name = expr` - one-time only, there is no reassignment and no loops anywhere. Iteration is recursion.
+Functions: `fn name(param: Type, ...) -> ReturnType { ... }`, optionally `async fn`. An optional `effects [pure]` clause marks a function as calling nothing beyond other pure/stdlib functions.
+Closures: `fn(param: Type) -> ReturnType { ... }` as an expression (no name) is a closure value; its type is written `fn(Type, Type) -> ReturnType`. A plain fn referenced by name without calling it also becomes a closure value.
+Control flow: `if condition { ... } else { ... }` - else, when present, is always followed by a block. There is no `while`, `for`, `<=`, `>=`, `!`, `&&`, or `||`.
+Enums: `enum Name { Variant1 Variant2 }` - a variant value is written `Name_Variant1` (one identifier, underscore-joined), used as a plain expression.
+Cross-file imports: `import "./other.an" as alias` makes every fn/enum/tool/infer in other.an available as `alias_name`. A file reached this way may only contain fn/enum/tool/infer/import at its top level.
+Stdlib imports: `import math` / `import string` / `import time` / `import collections` / `import distribution` / `import option` / `import json` / `import db` / `import auth` / `import log` / `import http` binds that module's native functions. `print(s: String)` needs no import.
+Key stdlib functions: string_concat(a, b), string_split(s, sep) -> List<String>, string_length/trim/contains/to_upper/to_lower, math_sqrt/pow/floor/ceil/round/abs/min/max, collections_length(list) -> Int, time_now_seconds() -> Int, http_serve(port: Int) (async - a program using it defines `fn handle_request(method: String, path: String, body: String) -> String` and ends with `await http_serve(port)`).
+Testing: `test "name" { ... }` blocks contain `assert condition` statements; `mock function_name -> value` only works inside a test block, for a declared infer/tool.
+No list literal can be empty (element type can't be inferred). No Option<T> construction syntax exists - only specific stdlib functions produce one; use an empty-string or sentinel value instead when you need "not found". No Int/String conversion exists.
+
+Respond with ONLY the AINT source code for the requested program, wrapped in a single ```an code fence, and nothing else - no explanation before or after."#;
+
+/// Strips a ` ```an ` / ` ```aint ` / plain ` ``` ` code fence if the
+/// model wrapped its answer in one (most do, even when asked not to);
+/// otherwise returns the trimmed response as-is.
+fn extract_source(response: &str) -> String {
+    let trimmed = response.trim();
+    let Some(after_open) = trimmed.strip_prefix("```") else {
+        return trimmed.to_string();
+    };
+    let without_lang = ["an\n", "aint\n", "\n"]
+        .iter()
+        .find_map(|prefix| after_open.strip_prefix(prefix))
+        .unwrap_or(after_open);
+    let body = without_lang
+        .rsplit_once("```")
+        .map(|(body, _)| body)
+        .unwrap_or(without_lang);
+    body.trim().to_string()
+}
+
+/// `aint scaffold "description" <path>` (milestone 32): generates a
+/// starter AINT project from a plain-English description, using the
+/// same OpenAI-compatible backend `aint run` optionally uses via
+/// `AINT_MODEL_URL` — required here (not optional), since there's
+/// nothing to scaffold without a real model. Refuses to overwrite an
+/// existing package, the same rule `aint init` follows. Generated code
+/// is always run through the same check `aint check` uses before being
+/// reported as done — a program that fails to type-check is still
+/// written to disk (so it's there to inspect and fix), but the command
+/// exits non-zero and says so, never silently passed off as finished.
+fn scaffold(description: &str, path: &Path) -> ExitCode {
+    let base_url = match std::env::var("AINT_MODEL_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!("error: aint scaffold requires AINT_MODEL_URL to be set");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let manifest_path = path.join(aint_package::MANIFEST_FILE_NAME);
+    if manifest_path.exists() {
+        eprintln!("error: {} already exists", manifest_path.display());
+        return ExitCode::FAILURE;
+    }
+
+    let model_name = std::env::var("AINT_MODEL_NAME").unwrap_or_else(|_| "default".to_string());
+    let mut client = aint_runtime::ChatClient::new(base_url, model_name);
+    if let Ok(api_key) = std::env::var("AINT_MODEL_API_KEY") {
+        client = client.with_api_key(api_key);
+    }
+
+    let runtime = match build_tokio_runtime() {
+        Ok(runtime) => runtime,
+        Err(code) => return code,
+    };
+
+    let response = match runtime.block_on(client.complete(SCAFFOLD_SYSTEM_PROMPT, description)) {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("error: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let source = extract_source(&response);
+
+    if let Err(err) = fs::create_dir_all(path) {
+        eprintln!("error: could not create {}: {err}", path.display());
+        return ExitCode::FAILURE;
+    }
+    let name = path
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "my-project".to_string());
+    let manifest = aint_package::Manifest::new(name, "0.1.0");
+    if let Err(err) = manifest.write_to_dir(path) {
+        eprintln!("error: {err}");
+        return ExitCode::FAILURE;
+    }
+    let main_an = path.join("main.an");
+    if let Err(err) = fs::write(&main_an, &source) {
+        eprintln!("error: could not write {}: {err}", main_an.display());
+        return ExitCode::FAILURE;
+    }
+
+    match parse_and_check(&main_an) {
+        Ok(_) => {
+            println!("created {} — type-checks cleanly", main_an.display());
+            ExitCode::SUCCESS
+        }
+        Err(code) => {
+            eprintln!(
+                "warning: the generated program at {} does not type-check — left on disk to inspect, not reported as done",
+                main_an.display()
+            );
+            code
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extract_source_strips_a_language_tagged_fence() {
+        let response = "```an\nprint(\"hi\")\n```";
+        assert_eq!(extract_source(response), "print(\"hi\")");
+    }
+
+    #[test]
+    fn extract_source_strips_a_plain_fence() {
+        let response = "```\nprint(\"hi\")\n```";
+        assert_eq!(extract_source(response), "print(\"hi\")");
+    }
+
+    #[test]
+    fn extract_source_passes_through_unfenced_text() {
+        let response = "print(\"hi\")";
+        assert_eq!(extract_source(response), "print(\"hi\")");
+    }
+
+    #[test]
+    fn extract_source_strips_surrounding_whitespace() {
+        let response = "\n\n  ```an\nprint(\"hi\")\n```\n\n";
+        assert_eq!(extract_source(response), "print(\"hi\")");
+    }
 }

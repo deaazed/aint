@@ -7,6 +7,7 @@
 //! against `MockTool` the same way. See `docs/RUNTIME.md` and
 //! `docs/milestones/04-tree-walk-interpreter/SPEC.md`.
 
+mod chat;
 mod db;
 mod environment;
 mod error;
@@ -19,6 +20,7 @@ mod tool;
 mod trace;
 mod value;
 
+pub use chat::ChatClient;
 pub use error::RuntimeError;
 pub use http_model::HttpModel;
 pub use interpreter::Interpreter;

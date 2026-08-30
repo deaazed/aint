@@ -87,9 +87,12 @@ stdlib covering math/string/time/collections, `Distribution<T>`/
 `Option<T>` operations, and — since milestone 25 — real JSON, a
 file-backed database, password hashing, logging, and a hand-rolled
 HTTP/1.1 server, enough to build and run a real HTTP API entirely in
-AINT (`examples/customer_support/`); and, since milestone 29,
-`import "path" as alias` — a real AINT program can span more than one
-file.
+AINT (`examples/customer_support/`); since milestone 29, `import
+"path" as alias` — a real AINT program can span more than one file;
+since milestone 30, closures (`fn(...) -> T { ... }` as a value); and
+since milestone 32, `aint scaffold "description" <path>` — generates a
+starter project from a plain-English description using the same model
+backend `aint run` does, always checked before it's reported as done.
 
 What's deliberately not here yet: native compilation, a hosted
 package registry, diamond-shared imports, and an LSP beyond syntax
