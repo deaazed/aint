@@ -1,0 +1,107 @@
+import string
+import collections
+
+fn join_lines(lines: List<String>, index: Int) -> String {
+    if index < collections_length(lines) {
+        return string_concat(lines[index], string_concat("\n", join_lines(lines, index + 1)))
+    } else {
+        return ""
+    }
+}
+
+// `code_block` is the same wrapper `layout.an` already defines,
+// passed in as a closure — same reasoning as `install.an`'s
+// `shell_block` parameter (see docs/milestones/33-website-rebuild/
+// SPEC.md for why this file can't import layout.an directly).
+fn content(code_block: fn(String) -> String) -> String {
+    return join_lines([
+        "<h2>Demos</h2>",
+        "<p class=\"lede\">Four real programs, not snippets trimmed to look good — every one of these is copy-pasted from a file that actually runs, checked and tested the same way any AINT program is.</p>",
+
+        "<h2>A route table, not a framework</h2>",
+        "<p>A closure is a value — passed as an argument, stored in a <code class=\"inline\">List</code>. That's enough to build a real router in AINT source, no framework required:</p>",
+        code_block(router_demo_lines()),
+        "<p class=\"stats-note\">The whole library is about sixty lines: <a href=\"https://github.com/deaazed/aint/blob/main/examples/router/router.an\">examples/router/router.an</a>.</p>",
+
+        "<h2>A program that spans files</h2>",
+        "<p>Declarations from another file arrive prefixed with the alias you imported it under — no build step, no module registry, just a path:</p>",
+        code_block(modularity_demo_lines()),
+
+        "<h2>A tool the AI can actually use</h2>",
+        "<p>Most \"AI tool calling\" demos fake the tool. This one doesn't — <code class=\"inline\">square</code> below has a real body, and a model requesting it mid-conversation runs that body for real, not a canned response:</p>",
+        code_block(real_tool_demo_lines()),
+        "<p class=\"stats-note\">A test can still <code class=\"inline\">mock square -&gt; 999</code> to keep that one deterministic — the mock always wins over the real body when it's configured.</p>",
+
+        "<h2>The language scaffolding itself</h2>",
+        "<p><code class=\"inline\">aint scaffold</code> asks a real model for a starter program from a plain-English description, then runs the same type-checker every other command does before it's ever called done:</p>",
+        code_block(scaffold_demo_lines()),
+        "<p class=\"stats-note\">If the model's answer doesn't type-check, it's still written to disk to look at — never handed over as if it were finished.</p>"
+    ], 0)
+}
+
+fn router_demo_lines() -> String {
+    return join_lines([
+        "<span class=\"kw\">import</span> \"./router.an\" <span class=\"kw\">as</span> router",
+        "",
+        "<span class=\"kw\">fn</span> home(method: <span class=\"tp\">String</span>, path: <span class=\"tp\">String</span>, body: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span> {",
+        "    <span class=\"kw\">return</span> <span class=\"st\">\"home\"</span>",
+        "}",
+        "",
+        "<span class=\"kw\">fn</span> about(method: <span class=\"tp\">String</span>, path: <span class=\"tp\">String</span>, body: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span> {",
+        "    <span class=\"kw\">return</span> <span class=\"st\">\"about\"</span>",
+        "}",
+        "",
+        "<span class=\"kw\">fn</span> handle_request(method: <span class=\"tp\">String</span>, path: <span class=\"tp\">String</span>, body: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span> {",
+        "    <span class=\"kw\">return</span> router_route(",
+        "        [<span class=\"st\">\"/\"</span>, <span class=\"st\">\"/about\"</span>], [home, about],",
+        "        method, path, body, not_found",
+        "    )",
+        "}",
+        "<span class=\"cm\">// registering a third route is one more entry in each list —</span>",
+        "<span class=\"cm\">// not a fourth level of nested if/else</span>"
+    ], 0)
+}
+
+fn modularity_demo_lines() -> String {
+    return join_lines([
+        "<span class=\"cm\">// util.an</span>",
+        "<span class=\"kw\">fn</span> greeting(name: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span> {",
+        "    <span class=\"kw\">return</span> string_concat(<span class=\"st\">\"Hi \"</span>, name)",
+        "}",
+        "",
+        "<span class=\"cm\">// main.an</span>",
+        "<span class=\"kw\">import</span> <span class=\"st\">\"./util.an\"</span> <span class=\"kw\">as</span> util",
+        "",
+        "print(util_greeting(<span class=\"st\">\"Ada\"</span>))",
+        "<span class=\"cm\">// $ aint run main.an</span>",
+        "<span class=\"cm\">// Hi Ada</span>"
+    ], 0)
+}
+
+fn real_tool_demo_lines() -> String {
+    return join_lines([
+        "<span class=\"kw\">tool</span> square(x: <span class=\"tp\">Int</span>) -&gt; <span class=\"tp\">Int</span> {",
+        "    <span class=\"kw\">return</span> x * x",
+        "}",
+        "",
+        "<span class=\"kw\">infer</span> pick_and_square(instruction: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">Int</span>",
+        "    <span class=\"kw\">permissions</span> [square]",
+        "",
+        "<span class=\"kw\">fn</span> main() -&gt; Unit {",
+        "    print(<span class=\"kw\">await</span> square(<span class=\"st\">7</span>))",
+        "    <span class=\"cm\">// 49 — the real body ran, no mock involved</span>",
+        "}",
+        "",
+        "main()"
+    ], 0)
+}
+
+fn scaffold_demo_lines() -> String {
+    return join_lines([
+        "$ aint scaffold <span class=\"st\">\"a program that greets someone by name\"</span> ./greeter",
+        "<span class=\"cm\"># created ./greeter/main.an — type-checks cleanly</span>",
+        "",
+        "$ aint run ./greeter/main.an",
+        "<span class=\"cm\"># Hello, world!</span>"
+    ], 0)
+}

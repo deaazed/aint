@@ -49,6 +49,7 @@ fn nav() -> String {
         "<nav class=\"nav\"><div class=\"wrap-wide navrow\">",
         "<a class=\"wordmark plain\" href=\"/\">aint</a>",
         "<div class=\"navlinks\">",
+        "<a href=\"/demos\">Demos</a>",
         "<a href=\"/docs/install\">Install</a>",
         "<a href=\"/docs/quickstart\">Quickstart</a>",
         "<a href=\"/docs/guide\">Guide</a>",

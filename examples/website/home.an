@@ -36,6 +36,7 @@ fn hero() -> List<String> {
         "<div class=\"tag\">infer &nbsp;·&nbsp; tool &nbsp;·&nbsp; effects [pure] &nbsp;·&nbsp; permissions [...] &nbsp;·&nbsp; budget {}</div>",
         "<div class=\"cta-row\">",
         "<a class=\"btn btn-primary\" href=\"/docs/quickstart\">Quickstart →</a>",
+        "<a class=\"btn btn-ghost\" href=\"/demos\">See it in action</a>",
         "<a class=\"btn btn-ghost\" href=\"https://github.com/deaazed/aint\">View on GitHub</a>",
         "</div>",
         "</div></header>"
@@ -102,7 +103,7 @@ fn why_section() -> List<String> {
         "<div class=\"card\"><span class=\"kicker\">permissions [...]</span><h3>Proves which tools an inference can reach</h3><p>Checked once statically, enforced again at the point of execution — independent of what the model was actually offered.</p></div>",
         "<div class=\"card\"><span class=\"kicker\">budget { }</span><h3>A resource ceiling the runtime enforces</h3><p>Token count, cost, and call count checked for every inference in a program, not a decorator someone has to remember.</p></div>",
         "</div>",
-        "<p class=\"stats-note\">Full reasoning: <a href=\"https://github.com/deaazed/aint/blob/main/docs/milestones/27-killer-abstraction/FINDINGS.md\">the killer-abstraction findings</a>.</p>",
+        "<p class=\"stats-note\">Full reasoning: <a href=\"https://github.com/deaazed/aint/blob/main/docs/LANGUAGE_DESIGN.md\">the language's design thesis</a>.</p>",
         "</div></section>"
     ]
 }
@@ -118,7 +119,7 @@ fn proof_section() -> List<String> {
         "<div class=\"stat\"><b>~3x</b><span>faster with no cryptography in the way</span></div>",
         "<div class=\"stat\"><b>~13x</b><span>faster on the bytecode VM vs. the tree-walker</span></div>",
         "</div>",
-        "<p class=\"stats-note\">Not a clean sweep — Python's total line count wins once AINT's one-time stdlib cost is counted, and its testing tools currently cover more ground in one suite. The full numbers, including what didn't favor AINT: <a href=\"https://github.com/deaazed/aint/blob/main/docs/milestones/26-benchmark/RESULTS.md\">docs/milestones/26-benchmark/RESULTS.md</a>.</p>",
+        "<p class=\"stats-note\">Not a clean sweep — Python's total line count wins once AINT's one-time stdlib cost is counted, and its testing tools currently cover more ground in one suite. Both sides of the comparison are real code, not a summary: <a href=\"https://github.com/deaazed/aint/tree/main/examples/customer_support\">the AINT version</a> and <a href=\"https://github.com/deaazed/aint/tree/main/benchmark/python\">the Python one</a>.</p>",
         "</div></section>"
     ]
 }
