@@ -1,0 +1,14 @@
+import string
+import collections
+
+fn join_lines(lines: List<String>, index: Int) -> String {
+    if index < collections_length(lines) {
+        return string_concat(lines[index], string_concat("\n", join_lines(lines, index + 1)))
+    } else {
+        return ""
+    }
+}
+
+fn content() -> String {
+    return join_lines(["<h2>Documentation</h2>", "<p class=\"lede\">Everything to go from nothing installed to a real AINT program that's tested, typed, and — if you want it — serving HTTP.</p>", "<div class=\"docs-grid\">", "<a class=\"doc-tile\" href=\"/docs/install\"><h3>Install →</h3><p>Build the toolchain from source with Cargo.</p></a>", "<a class=\"doc-tile\" href=\"/docs/quickstart\"><h3>Quickstart →</h3><p>Hello world, aint run, aint test, in five minutes.</p></a>", "<a class=\"doc-tile\" href=\"/docs/guide\"><h3>Language guide →</h3><p>Types, control flow, effects, infer/tool, testing.</p></a>", "<a class=\"doc-tile\" href=\"/docs/stdlib\"><h3>Standard library →</h3><p>Every module, every function, what it does.</p></a>", "<a class=\"doc-tile\" href=\"/docs/reference\"><h3>Reference →</h3><p>Execution model, errors, and the known gaps — stated directly.</p></a>", "<a class=\"doc-tile\" href=\"https://github.com/deaazed/aint/blob/main/docs/SPECIFICATION.md\"><h3>Full specification ↗</h3><p>The complete, versioned language reference on GitHub.</p></a>", "</div>"], 0)
+}

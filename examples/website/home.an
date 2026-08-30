@@ -1,0 +1,124 @@
+import string
+import collections
+
+// The landing page's own content (hero through the benchmark numbers)
+// — main.an wraps this with layout.an's head/nav/footer. A small,
+// local join_lines duplicates layout.an's own copy: this file can't
+// import layout.an itself, since main.an already does, and milestone
+// 29's loader doesn't support the same file being imported from two
+// places yet.
+fn join_lines(lines: List<String>, index: Int) -> String {
+    if index < collections_length(lines) {
+        return string_concat(lines[index], string_concat("\n", join_lines(lines, index + 1)))
+    } else {
+        return ""
+    }
+}
+
+fn content() -> String {
+    return string_concat(
+        join_lines(hero(), 0),
+        string_concat(
+            join_lines(example_section(), 0),
+            string_concat(
+                join_lines(why_section(), 0),
+                join_lines(proof_section(), 0)
+            )
+        )
+    )
+}
+
+fn hero() -> List<String> {
+    return [
+        "<header class=\"hero section-border\"><div class=\"wrap\">",
+        "<h1>Deterministic computation and AI inference,<br>both first-class.</h1>",
+        "<p class=\"lede\">A programming language where calling a model is a real statement, not a library call — typed, checked, tested offline, and governed by the compiler, not by convention.</p>",
+        "<div class=\"tag\">infer &nbsp;·&nbsp; tool &nbsp;·&nbsp; effects [pure] &nbsp;·&nbsp; permissions [...] &nbsp;·&nbsp; budget {}</div>",
+        "<div class=\"cta-row\">",
+        "<a class=\"btn btn-primary\" href=\"/docs/quickstart\">Quickstart →</a>",
+        "<a class=\"btn btn-ghost\" href=\"https://github.com/deaazed/aint\">View on GitHub</a>",
+        "</div>",
+        "</div></header>"
+    ]
+}
+
+fn example_section() -> List<String> {
+    return [
+        "<section id=\"example\" class=\"section-border\"><div class=\"wrap-wide\">",
+        "<h2>This type-checks, and its test actually passes</h2>",
+        "<p>No mocking framework, no monkeypatching — <span class=\"accent\">mock</span>, <span class=\"accent\">assert</span>, and <span class=\"accent\">test</span> are language statements.</p>",
+        code_block(),
+        "</div></section>"
+    ]
+}
+
+fn code_block() -> String {
+    return string_concat("<div class=\"code\"><pre>", string_concat(code_lines(), "</pre></div>"))
+}
+
+fn code_lines() -> String {
+    return join_lines([
+        "<span class=\"kw\">import</span> string",
+        "",
+        "<span class=\"kw\">enum</span> Intent { Refund Support Sales Other }",
+        "",
+        "<span class=\"kw\">tool</span> find_customer(id: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span>",
+        "",
+        "<span class=\"kw\">infer</span> classify(message: <span class=\"tp\">String</span>) -&gt; Intent",
+        "    <span class=\"kw\">permissions</span> [find_customer]",
+        "",
+        "<span class=\"kw\">fn</span> greeting(name: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span> <span class=\"kw\">effects</span> [pure] {",
+        "    <span class=\"kw\">return</span> string_concat(<span class=\"st\">\"Hi \"</span>, name)",
+        "}",
+        "",
+        "<span class=\"kw\">fn</span> respond(message: <span class=\"tp\">String</span>, customer_id: <span class=\"tp\">String</span>) -&gt; <span class=\"tp\">String</span> {",
+        "    <span class=\"kw\">let</span> intent = <span class=\"kw\">await</span> classify(message)",
+        "",
+        "    <span class=\"kw\">if</span> intent == Intent_Refund {",
+        "        <span class=\"kw\">let</span> customer = <span class=\"kw\">await</span> find_customer(customer_id)",
+        "        <span class=\"kw\">return</span> string_concat(greeting(customer), <span class=\"st\">\", I'll help you process your refund.\"</span>)",
+        "    } <span class=\"kw\">else</span> {",
+        "        <span class=\"kw\">return</span> <span class=\"st\">\"Could you provide more details?\"</span>",
+        "    }",
+        "}",
+        "",
+        "<span class=\"kw\">test</span> <span class=\"st\">\"a refund message gets routed to a human-sounding reply\"</span> {",
+        "    <span class=\"kw\">mock</span> classify -&gt; Intent_Refund",
+        "    <span class=\"kw\">mock</span> find_customer -&gt; <span class=\"st\">\"Ada\"</span>",
+        "    <span class=\"kw\">assert</span> respond(<span class=\"st\">\"I want my money back\"</span>, <span class=\"st\">\"42\"</span>) == <span class=\"st\">\"Hi Ada, I'll help you process your refund.\"</span>",
+        "}",
+        "<span class=\"cm\">// $ aint test example.an</span>",
+        "<span class=\"cm\">// test \"a refund message gets routed to a human-sounding reply\" ... ok</span>"
+    ], 0)
+}
+
+fn why_section() -> List<String> {
+    return [
+        "<section class=\"section-border\"><div class=\"wrap-wide\">",
+        "<h2>The bet isn't that AI calls are easier to write</h2>",
+        "<p class=\"lede\">Python's ecosystem caught up on that — Pydantic gets structured output out of a model in about as many lines as <span class=\"accent\">infer</span> does. The bet is that a program's entire AI surface area is checkable and enforced, the same way type safety already is.</p>",
+        "<div class=\"grid3\">",
+        "<div class=\"card\"><span class=\"kicker\">effects [pure]</span><h3>Proves a function can't reach a model</h3><p>Not a lint rule a team agreed to follow — the compiler rejects the program if it does.</p></div>",
+        "<div class=\"card\"><span class=\"kicker\">permissions [...]</span><h3>Proves which tools an inference can reach</h3><p>Checked once statically, enforced again at the point of execution — independent of what the model was actually offered.</p></div>",
+        "<div class=\"card\"><span class=\"kicker\">budget { }</span><h3>A resource ceiling the runtime enforces</h3><p>Token count, cost, and call count checked for every inference in a program, not a decorator someone has to remember.</p></div>",
+        "</div>",
+        "<p class=\"stats-note\">Full reasoning: <a href=\"https://github.com/deaazed/aint/blob/main/docs/milestones/27-killer-abstraction/FINDINGS.md\">the killer-abstraction findings</a>.</p>",
+        "</div></section>"
+    ]
+}
+
+fn proof_section() -> List<String> {
+    return [
+        "<section><div class=\"wrap-wide\">",
+        "<h2>Measured, not asserted</h2>",
+        "<p>A real HTTP customer-support API, built in AINT, benchmarked head-to-head against the same thing in Python + FastAPI + Pydantic + LangGraph — on the same machine, back to back.</p>",
+        "<div class=\"stats\">",
+        "<div class=\"stat\"><b>~12x</b><span>less memory at idle</span></div>",
+        "<div class=\"stat\"><b>~40x</b><span>smaller deployed footprint</span></div>",
+        "<div class=\"stat\"><b>~3x</b><span>faster with no cryptography in the way</span></div>",
+        "<div class=\"stat\"><b>~13x</b><span>faster on the bytecode VM vs. the tree-walker</span></div>",
+        "</div>",
+        "<p class=\"stats-note\">Not a clean sweep — Python's total line count wins once AINT's one-time stdlib cost is counted, and its testing tools currently cover more ground in one suite. The full numbers, including what didn't favor AINT: <a href=\"https://github.com/deaazed/aint/blob/main/docs/milestones/26-benchmark/RESULTS.md\">docs/milestones/26-benchmark/RESULTS.md</a>.</p>",
+        "</div></section>"
+    ]
+}

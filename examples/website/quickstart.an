@@ -1,0 +1,26 @@
+import string
+import collections
+
+fn join_lines(lines: List<String>, index: Int) -> String {
+    if index < collections_length(lines) {
+        return string_concat(lines[index], string_concat("\n", join_lines(lines, index + 1)))
+    } else {
+        return ""
+    }
+}
+
+fn content(shell_block: fn(String) -> String) -> String {
+    return join_lines(["<h2>Quickstart</h2>", "<p class=\"lede\">Five minutes: a program that runs, a program that recurses, and a program that's tested — the three things every AINT program eventually needs.</p>", "<h2>1. Hello, AINT</h2>", "<p>Create <code class=\"inline\">hello.an</code>:</p>", shell_block(hello_code_lines()), "<p>Run it:</p>", shell_block(join_lines(["aint run hello.an", "<span class=\"cm\"># Hello, AINT!</span>"], 0)), "<h2>2. Functions and recursion</h2>", "<p>AINT has no loops — recursion is the only iteration mechanism, and there's no reassignment, so every <code class=\"inline\">let</code> is a one-time binding:</p>", shell_block(fib_code_lines()), "<h2>3. Type-check without running</h2>", "<p><code class=\"inline\">aint check</code> parses and type-checks a file without executing it — the same gate <code class=\"inline\">aint run</code> uses, on its own:</p>", shell_block(join_lines(["aint check fib.an"], 0)), "<h2>4. Test it, offline</h2>", "<p><code class=\"inline\">test</code>, <code class=\"inline\">mock</code>, and <code class=\"inline\">assert</code> are real statements — no test framework to install:</p>", shell_block(test_code_lines()), shell_block(join_lines(["aint test fib.an", "<span class=\"cm\"># test \"fibonacci(10) is 55\" ... ok</span>", "<span class=\"cm\"># 1 run, 1 passed, 0 failed</span>"], 0)), "<h2>5. Format it</h2>", "<p><code class=\"inline\">aint fmt</code> reformats a file to AINT's canonical style, in place; <code class=\"inline\">aint fmt --check</code> reports without writing, for CI:</p>", shell_block(join_lines(["aint fmt fib.an", "aint fmt --check fib.an"], 0)), "<div class=\"callout\"><p>Next: the <a href=\"/docs/guide\">language guide</a> for the full tour — types, effects, <code class=\"inline\">infer</code>/<code class=\"inline\">tool</code> — or jump straight to a real, complete application: <a href=\"https://github.com/deaazed/aint/tree/main/examples/customer_support\">examples/customer_support</a>, an HTTP API with auth, a database, and AI-driven ticket routing, entirely in AINT.</p></div>"], 0)
+}
+
+fn hello_code_lines() -> String {
+    return join_lines(["print(<span class=\"st\">\"Hello, AINT!\"</span>)"], 0)
+}
+
+fn fib_code_lines() -> String {
+    return join_lines(["<span class=\"kw\">fn</span> fibonacci(n: <span class=\"tp\">Int</span>) -&gt; <span class=\"tp\">Int</span> {", "    <span class=\"kw\">if</span> n &lt; 2 {", "        <span class=\"kw\">return</span> n", "    }", "    <span class=\"kw\">return</span> fibonacci(n - 1) + fibonacci(n - 2)", "}", "", "print(fibonacci(<span class=\"st\">10</span>))", "<span class=\"cm\">// 55</span>"], 0)
+}
+
+fn test_code_lines() -> String {
+    return join_lines(["<span class=\"kw\">test</span> <span class=\"st\">\"fibonacci(10) is 55\"</span> {", "    <span class=\"kw\">assert</span> fibonacci(10) == 55", "}"], 0)
+}

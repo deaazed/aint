@@ -1,0 +1,22 @@
+import string
+import collections
+
+fn join_lines(lines: List<String>, index: Int) -> String {
+    if index < collections_length(lines) {
+        return string_concat(lines[index], string_concat("\n", join_lines(lines, index + 1)))
+    } else {
+        return ""
+    }
+}
+
+fn content() -> String {
+    return join_lines(["<h2>Standard library</h2>", "<p class=\"lede\">Every function below is gated behind <code class=\"inline\">import &lt;module&gt;</code>. <code class=\"inline\">print</code> is the one exception — always available, ungated.</p>", stdlib_table()], 0)
+}
+
+fn stdlib_table() -> String {
+    return join_lines(["<table class=\"stdlib\">", "<tr><th>Module</th><th>Functions</th></tr>", stdlib_row("math", "math_sqrt, math_pow, math_floor, math_ceil, math_round, math_abs, math_min, math_max"), stdlib_row("string", "string_length, string_to_upper, string_to_lower, string_trim, string_contains, string_concat, string_split(s, sep) -&gt; List&lt;String&gt;"), stdlib_row("time", "time_now_seconds, time_sleep_ms (async)"), stdlib_row("collections", "collections_length (polymorphic over List&lt;T&gt;)"), stdlib_row("distribution", "distribution_probability, distribution_argmax, distribution_entropy, distribution_sample, distribution_require_confidence"), stdlib_row("option", "option_is_some, option_unwrap"), stdlib_row("json", "json_get(json, key) -&gt; Option&lt;String&gt;, json_object(keys, values) -&gt; String — flat objects only"), stdlib_row("db", "db_insert, db_get -&gt; Option&lt;String&gt;, db_list -&gt; List&lt;String&gt;, db_update, db_delete — file-backed, .aintdb/&lt;table&gt;.jsonl"), stdlib_row("auth", "auth_hash_password / auth_verify_password (real bcrypt), auth_generate_token (real randomness)"), stdlib_row("log", "log_info, log_error — timestamped lines to stderr"), stdlib_row("http", "http_serve(port) (async) — a real HTTP/1.1 server, one connection at a time, dispatching to a program-defined handle_request"), "</table>"], 0)
+}
+
+fn stdlib_row(module: String, functions: String) -> String {
+    return string_concat("<tr><td class=\"mod\">", string_concat(module, string_concat("</td><td><code>", string_concat(functions, "</code></td></tr>"))))
+}

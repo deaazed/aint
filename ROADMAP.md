@@ -234,11 +234,12 @@ generate a starter project from a plain-English description, always
 run through the same check `aint check` uses before being reported as
 done. See `docs/milestones/32-ai-scaffolding/SPEC.md`.
 
-## 33 — Rebuild the language's own website
+## 33 — Rebuild the language's own website — done
 
-`examples/website/` rebuilt on 29–31, as the real, shipped proof —
-same reasoning milestones 25/26 used: if AINT can't comfortably build
-this, the abstractions aren't right yet.
+`examples/website/` rebuilt on 29–31 — one 635-line file with a
+7-level-deep nested `if`/`else` router became nine files and a flat
+route table, verified live the same way the original was. See
+`docs/milestones/33-website-rebuild/SPEC.md`.
 
 ---
 

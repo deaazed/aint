@@ -1,0 +1,51 @@
+import string
+import collections
+
+fn join_lines(lines: List<String>, index: Int) -> String {
+    if index < collections_length(lines) {
+        return string_concat(lines[index], string_concat("\n", join_lines(lines, index + 1)))
+    } else {
+        return ""
+    }
+}
+
+// `shell_block` is passed in rather than duplicated — it's the same
+// wrapper `layout.an` already defines, taken as a closure (milestone
+// 30) instead of a second copy: exactly the kind of small,
+// dependency-injected sharing closures make possible without needing
+// a second import of a file already imported once.
+fn content(shell_block: fn(String) -> String) -> String {
+    return join_lines([
+        "<h2>Install</h2>",
+        "<p class=\"lede\">There's no installer and no package registry yet — AINT builds from source with Cargo, and that's the whole story.</p>",
+        "<h2>Requirements</h2>",
+        "<p>A recent stable Rust toolchain (<code class=\"inline\">rustc</code> + <code class=\"inline\">cargo</code>). If you don't have one: <a href=\"https://rustup.rs\">rustup.rs</a>.</p>",
+        "<h2>Build</h2>",
+        shell_block(install_shell_lines()),
+        "<div class=\"callout\"><p>Prefer <code class=\"inline\">cargo build --release</code> for anything performance-sensitive — the debug build is meaningfully slower, and the bytecode VM's whole point is speed.</p></div>",
+        "<h2>Verify it worked</h2>",
+        shell_block(verify_shell_lines()),
+        "<p>If that prints <code class=\"inline\">Hello, AINT!</code>, you're set. Next: <a href=\"/docs/quickstart\">the quickstart</a>.</p>"
+    ], 0)
+}
+
+fn install_shell_lines() -> String {
+    return join_lines([
+        "<span class=\"cm\"># clone the repository</span>",
+        "git clone https://github.com/deaazed/aint.git",
+        "<span class=\"cm\">cd</span> aint",
+        "",
+        "<span class=\"cm\"># build everything (debug)</span>",
+        "cargo build",
+        "",
+        "<span class=\"cm\"># or, an optimized build</span>",
+        "cargo build --release"
+    ], 0)
+}
+
+fn verify_shell_lines() -> String {
+    return join_lines([
+        "cargo run -- run examples/hello.an",
+        "<span class=\"cm\"># Hello, AINT!</span>"
+    ], 0)
+}

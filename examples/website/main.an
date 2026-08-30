@@ -1,0 +1,95 @@
+// The language's own site — rebuilt (milestone 33) on top of what
+// milestones 29-31 actually built: split across files instead of one
+// 635-line source, and routed through a flat table
+// (examples/router/router.an) instead of nested if/else.
+import "./layout.an" as layout
+import "./home.an" as home
+import "./docs_index.an" as docs_index
+import "./install.an" as install
+import "./quickstart.an" as quickstart
+import "./guide.an" as guide
+import "./stdlib_page.an" as stdlib
+import "./reference.an" as reference
+import "../router/router.an" as router
+import http
+
+fn home_page(method: String, path: String, body: String) -> String {
+    return string_concat(
+        layout_head(
+            "AINT — deterministic computation and AI inference, both first-class",
+            "AINT is a programming language where AI inference is checked, tested, and governed by the compiler — not bolted on through an SDK."
+        ),
+        string_concat(layout_nav(), string_concat(home_content(), layout_page_footer()))
+    )
+}
+
+fn docs_index_route(method: String, path: String, body: String) -> String {
+    return layout_doc_page(
+        "Docs — AINT",
+        "Install, quick start, language guide, standard library reference, and the honest reference for AINT.",
+        "index",
+        docs_index_content()
+    )
+}
+
+fn install_route(method: String, path: String, body: String) -> String {
+    return layout_doc_page(
+        "Install — AINT docs",
+        "Build the AINT toolchain from source. Requires a recent stable Rust toolchain, nothing else.",
+        "install",
+        install_content(layout_shell_block)
+    )
+}
+
+fn quickstart_route(method: String, path: String, body: String) -> String {
+    return layout_doc_page(
+        "Quickstart — AINT docs",
+        "Write, run, and test your first AINT program in about five minutes.",
+        "quickstart",
+        quickstart_content(layout_shell_block)
+    )
+}
+
+fn guide_route(method: String, path: String, body: String) -> String {
+    return layout_doc_page(
+        "Language guide — AINT docs",
+        "A tour of AINT: types, let bindings, control flow, functions, closures, modularity, infer/tool/permissions, and testing.",
+        "guide",
+        guide_content(layout_shell_block)
+    )
+}
+
+fn stdlib_route(method: String, path: String, body: String) -> String {
+    return layout_doc_page(
+        "Standard library — AINT docs",
+        "Every stdlib module AINT ships, gated behind import, and every function it provides.",
+        "stdlib",
+        stdlib_content()
+    )
+}
+
+fn reference_route(method: String, path: String, body: String) -> String {
+    return layout_doc_page(
+        "Reference — AINT docs",
+        "Execution model, error taxonomy, and the known gaps — stated directly, not discovered the hard way.",
+        "reference",
+        reference_content()
+    )
+}
+
+fn not_found(method: String, path: String, body: String) -> String {
+    return "<!doctype html><html><head><meta charset=\"utf-8\"><title>Not found — AINT</title><style>body{background:#0a0a0c;color:#f2f1ec;font-family:system-ui,sans-serif;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;height:100vh;margin:0}a{color:#ffb454}</style></head><body><p>404 — nothing here.</p><a href=\"/\">Back home</a></body></html>"
+}
+
+fn handle_request(method: String, path: String, body: String) -> String {
+    return router_route(
+        ["/", "/docs", "/docs/install", "/docs/quickstart", "/docs/guide", "/docs/stdlib", "/docs/reference"],
+        [home_page, docs_index_route, install_route, quickstart_route, guide_route, stdlib_route, reference_route],
+        method,
+        path,
+        body,
+        not_found
+    )
+}
+
+await http_serve(8080)
