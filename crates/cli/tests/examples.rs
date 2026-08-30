@@ -160,6 +160,40 @@ fn a_program_using_async_fn_fails_clearly_under_the_vm() {
     );
 }
 
+/// `examples/closures.an` uses `fn(...) -> T { ... }` lambda
+/// expressions (milestone 30) - the VM's deterministic core doesn't
+/// support closures at all yet, so lowering rejects it outright,
+/// before the VM compiler even runs.
+#[test]
+fn a_program_using_closures_fails_clearly_under_the_vm() {
+    let output = run_aint_vm(&example_path("closures.an"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("UnsupportedLambda"),
+        "expected a clear unsupported-lambda message, got: {stderr}"
+    );
+}
+
+#[test]
+fn closures_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("closures.an"));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "6\n11\n12\n6\n25\n42\n"
+    );
+}
+
+#[test]
+fn closures_an_test_block_passes() {
+    let output = test_aint(&example_path("closures.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 run, 1 passed, 0 failed"));
+}
+
 #[test]
 fn async_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("async.an"));

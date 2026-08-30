@@ -25,6 +25,17 @@ pub enum LowerError {
     /// which `lower` requires has already run. See
     /// `docs/milestones/29-modularity/SPEC.md`.
     UnresolvedImport { span: Span },
+    /// A `fn(...) -> T { ... }` lambda expression (milestone 30). The
+    /// bytecode VM's deterministic core doesn't support closures at
+    /// all yet — a documented parity gap, not a silent miscompilation.
+    /// Calling a *named* closure-holding variable already fails
+    /// clearly on its own (the VM compiler's global function table
+    /// simply won't contain it — see `CompileError::UndefinedName` in
+    /// `aint-vm`); this covers every other use of a lambda expression
+    /// (as a `let` value, a `List` element, an argument, ...), which
+    /// that mechanism alone wouldn't catch. See
+    /// `docs/milestones/30-closures/SPEC.md`.
+    UnsupportedLambda { span: Span },
 }
 
 /// Lowers an entire program. Expects `program` to already be
@@ -177,6 +188,7 @@ impl Lowerer {
             }),
             ExprKind::Await(inner) => Ok(AirExpr::Await(Box::new(self.lower_expr(inner)?))),
             ExprKind::Call { callee, args } => self.lower_call(callee, args, expr.span),
+            ExprKind::Lambda { .. } => Err(LowerError::UnsupportedLambda { span: expr.span }),
         }
     }
 

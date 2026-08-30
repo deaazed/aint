@@ -279,6 +279,18 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
             },
         ) => expr_eq(o1, o2) && expr_eq(i1, i2),
         (ExprKind::Await(a), ExprKind::Await(b)) => expr_eq(a, b),
+        (
+            ExprKind::Lambda {
+                params: p1,
+                return_type: r1,
+                body: b1,
+            },
+            ExprKind::Lambda {
+                params: p2,
+                return_type: r2,
+                body: b2,
+            },
+        ) => params_eq(p1, p2) && r1 == r2 && block_eq(b1, b2),
         _ => false,
     }
 }

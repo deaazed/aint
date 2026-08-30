@@ -220,6 +220,11 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     params: params.iter().map(|p| p.name.clone()).collect(),
                     body: body.clone(),
                     is_async: *is_async,
+                    // For a top-level `fn`, `env` here is always
+                    // `globals` (unchanged from before milestone 30) —
+                    // this only differs for a block-nested `fn`, which
+                    // now closes over its enclosing scope too.
+                    captured_env: Rc::clone(env),
                 }));
                 env.borrow_mut().define(name.clone(), function);
                 Ok(Flow::Normal)
@@ -471,6 +476,17 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     }),
                 }
             }
+            ExprKind::Lambda { params, body, .. } => Ok(Value::Function(Rc::new(Function {
+                name: "<lambda>".to_string(),
+                params: params.iter().map(|p| p.name.clone()).collect(),
+                body: body.clone(),
+                is_async: false,
+                // The actual capture: `env` here is whatever scope is
+                // active where this lambda expression is evaluated, not
+                // always `globals` — see `Function::captured_env`'s doc
+                // comment.
+                captured_env: Rc::clone(env),
+            }))),
         }
     }
 
@@ -565,9 +581,13 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         }
     }
 
-    /// Runs a function body to completion: parented to *globals*, not
-    /// the caller's environment, since there's no real closure
-    /// semantics yet (see SPEC.md). Shared by the sync-call path in
+    /// Runs a function body to completion: parented to the function's
+    /// *captured* environment (milestone 30) — `globals` for every
+    /// top-level `fn`, exactly as before this milestone; the enclosing
+    /// scope for a lambda, which is the actual closure semantics. Not
+    /// the *caller's* environment either way — see
+    /// `Function::captured_env`'s doc comment for why capturing by
+    /// reference is sound. Shared by the sync-call path in
     /// [`Self::call`] and the await path in [`Self::eval_await`].
     #[async_recursion(?Send)]
     async fn run_function(
@@ -575,7 +595,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         function: &Rc<Function>,
         args: Vec<Value>,
     ) -> Result<Value, RuntimeError> {
-        let call_env = Environment::child(&self.globals);
+        let call_env = Environment::child(&function.captured_env);
         for (param, value) in function.params.iter().zip(args) {
             call_env.borrow_mut().define(param.clone(), value);
         }
@@ -1492,6 +1512,53 @@ mod tests {
     #[test]
     fn let_and_arithmetic() {
         assert_eq!(run_capturing("let x = 1 + 2 * 3\nprint(x)"), "7\n");
+    }
+
+    #[test]
+    fn a_lambda_captures_its_defining_scope_not_globals() {
+        // The real proof this is a closure and not still "parent to
+        // globals" (milestone 30): `n` is `make_adder`'s own local
+        // parameter, long out of scope by the time `add5` is actually
+        // called — only correct if `fn(x: Int) -> Int { ... }` captured
+        // the environment live where it was defined, not `globals`.
+        assert_eq!(
+            run_capturing(concat!(
+                "fn make_adder(n: Int) -> fn(Int) -> Int {\n",
+                "    return fn(x: Int) -> Int {\n",
+                "        return x + n\n",
+                "    }\n",
+                "}\n",
+                "let add5 = make_adder(5)\n",
+                "let add10 = make_adder(10)\n",
+                "print(add5(1))\n",
+                "print(add10(1))\n"
+            )),
+            "6\n11\n"
+        );
+    }
+
+    #[test]
+    fn closures_stored_in_a_list_are_called_correctly_by_index() {
+        assert_eq!(
+            run_capturing(concat!(
+                "let handlers = [fn(x: Int) -> Int {\n",
+                "    return x + 1\n",
+                "}, fn(x: Int) -> Int {\n",
+                "    return x * 2\n",
+                "}]\n",
+                "print(handlers[0](5))\n",
+                "print(handlers[1](5))\n"
+            )),
+            "6\n10\n"
+        );
+    }
+
+    #[test]
+    fn an_immediately_invoked_lambda_runs_directly() {
+        assert_eq!(
+            run_capturing("print((fn(x: Int) -> Int {\n    return x * x\n})(4))"),
+            "16\n"
+        );
     }
 
     #[test]

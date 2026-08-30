@@ -267,6 +267,12 @@ impl TypeChecker {
                 }),
             },
             Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => Ok(()),
+            Type::Function(params, ret) => {
+                for param in params {
+                    self.validate_type(param, span)?;
+                }
+                self.validate_type(ret, span)
+            }
         }
     }
 
@@ -615,6 +621,17 @@ impl TypeChecker {
             ExprKind::Bool(_) => Ok(Type::Bool),
             ExprKind::Identifier(name) => match self.lookup(name) {
                 Some(Binding::Variable(ty)) => Ok(ty.clone()),
+                // A plain, synchronous, non-`infer`/`tool` function
+                // decays to a first-class closure value when referenced
+                // bare (milestone 30) — `async fn`/`infer`/`tool` still
+                // don't, since calling the result would need to
+                // interoperate with `Task<T>`/`Inference<T>`/`Tool<T>`,
+                // which is out of scope for v1. See
+                // `docs/milestones/30-closures/SPEC.md`.
+                Some(Binding::Function(sig)) if sig.mode == CallMode::Sync => Ok(Type::Function(
+                    sig.params.clone(),
+                    Box::new(sig.return_type.clone()),
+                )),
                 Some(
                     Binding::Function(_)
                     | Binding::PolymorphicListFunction
@@ -699,17 +716,135 @@ impl TypeChecker {
                     }),
                 }
             }
+            ExprKind::Lambda {
+                params,
+                return_type,
+                body,
+            } => {
+                for param in params {
+                    self.validate_type(&param.ty, expr.span)?;
+                }
+                self.validate_type(return_type, expr.span)?;
+
+                self.push_scope();
+                for param in params {
+                    self.define(param.name.clone(), Binding::Variable(param.ty.clone()));
+                }
+                let previous_return_type = self.current_return_type.replace(return_type.clone());
+                // A lambda has no `effects` clause, so it's untracked —
+                // exactly like a top-level `fn` with none: its own body
+                // isn't effect-checked against whatever the enclosing
+                // function declared, and (see `check_call`) it can't be
+                // called back from anywhere that *is* effect-checked.
+                let previous_effects = self.current_effects.take();
+                self.check_block(body)?;
+                self.current_effects = previous_effects;
+                self.current_return_type = previous_return_type;
+                self.pop_scope();
+
+                if *return_type != Type::Unit && !definitely_returns(&body.statements) {
+                    return Err(TypeError::MissingReturn {
+                        name: "<lambda>".to_string(),
+                        expected: return_type.clone(),
+                        span: body.span,
+                    });
+                }
+
+                Ok(Type::Function(
+                    params.iter().map(|p| p.ty.clone()).collect(),
+                    Box::new(return_type.clone()),
+                ))
+            }
         }
     }
 
+    /// Type-checks a call to a closure *value* — a `Type::Function`
+    /// reached either through a variable/parameter binding or through
+    /// any non-identifier callee expression (an index into a
+    /// `List<Function>`, an immediately-invoked lambda, another call's
+    /// result). Distinct from `check_call`'s named-function fast path,
+    /// which keeps its existing `Async`/`Infer`/`ToolCall` mode and
+    /// `Polymorphic*` handling untouched. Callers that have a name to
+    /// report (a variable that isn't actually callable) should check
+    /// for `Type::Function` themselves first and fall back to
+    /// `TypeError::NotAFunction`, matching pre-closures behavior — this
+    /// only produces the generic "cannot call a value of type ..."
+    /// message for a genuinely anonymous callee. See
+    /// `docs/milestones/30-closures/SPEC.md`.
+    fn check_call_to_value(
+        &mut self,
+        ty: Type,
+        args: &[Expr],
+        callee_span: Span,
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        match ty {
+            Type::Function(params, return_type) => {
+                self.check_closure_call(&params, &return_type, args, span)
+            }
+            other => Err(TypeError::Mismatch {
+                message: format!("cannot call a value of type {other}"),
+                span: callee_span,
+            }),
+        }
+    }
+
+    /// The actual arity/argument-type/effect checking for a call to a
+    /// known closure signature — shared by `check_call_to_value` and
+    /// `check_call`'s `Binding::Variable` arm (which needs its own
+    /// `TypeError::NotAFunction` fallback when the variable isn't
+    /// `Type::Function` at all, so it can't just delegate to
+    /// `check_call_to_value`).
+    fn check_closure_call(
+        &mut self,
+        params: &[Type],
+        return_type: &Type,
+        args: &[Expr],
+        span: Span,
+    ) -> Result<Type, TypeError> {
+        if params.len() != args.len() {
+            return Err(TypeError::Mismatch {
+                message: format!(
+                    "this call expects {} argument(s), found {}",
+                    params.len(),
+                    args.len()
+                ),
+                span,
+            });
+        }
+        for (index, (arg, expected)) in args.iter().zip(params).enumerate() {
+            let found = self.check_expr(arg)?;
+            if found != *expected {
+                return Err(TypeError::Mismatch {
+                    message: format!("argument {} expects {expected}, found {found}", index + 1),
+                    span: arg.span,
+                });
+            }
+        }
+        // A closure is always untracked (see the `Lambda` arm above) —
+        // incompatible with any effect-checked caller, the same rule an
+        // unannotated top-level `fn` follows.
+        if self.current_effects.is_some() {
+            return Err(TypeError::Mismatch {
+                message: "this closure cannot be called here; its effects aren't declared compatible with the caller's `effects` clause".to_string(),
+                span,
+            });
+        }
+        Ok(return_type.clone())
+    }
+
     fn check_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> Result<Type, TypeError> {
+        // A non-identifier callee (an index into a `List<Function>`, an
+        // immediately-invoked lambda, another call's result) can only
+        // ever be a closure *value* — milestone 30. The named-function
+        // fast path below stays exactly as it was for every identifier
+        // callee, including one bound to a closure-typed variable/
+        // parameter, which `Binding::Variable`'s own arm now handles.
         let name = match &callee.kind {
             ExprKind::Identifier(name) => name,
             _ => {
-                return Err(TypeError::Mismatch {
-                    message: "only named functions can be called".to_string(),
-                    span: callee.span,
-                });
+                let ty = self.check_expr(callee)?;
+                return self.check_call_to_value(ty, args, callee.span, span);
             }
         };
 
@@ -759,6 +894,11 @@ impl TypeChecker {
                 let op = *op;
                 let name = name.clone();
                 return self.check_option_call(&name, op, args, span);
+            }
+            Some(Binding::Variable(Type::Function(params, return_type))) => {
+                let params = params.clone();
+                let return_type = *return_type.clone();
+                return self.check_closure_call(&params, &return_type, args, span);
             }
             Some(Binding::Variable(_)) => {
                 return Err(TypeError::NotAFunction {
@@ -1089,6 +1229,75 @@ mod tests {
     fn rejects_calling_a_non_function() {
         let err = check("let x = 1\nx()").unwrap_err();
         assert!(matches!(err, TypeError::NotAFunction { .. }));
+    }
+
+    #[test]
+    fn a_lambda_stored_in_a_let_can_be_called() {
+        check("let add_one = fn(x: Int) -> Int {\n    return x + 1\n}\nprint(add_one(4))")
+            .expect("should type-check");
+    }
+
+    #[test]
+    fn calling_a_lambda_with_the_wrong_arity_is_rejected() {
+        let err = check("let f = fn(x: Int) -> Int {\n    return x\n}\nf(1, 2)").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn calling_a_lambda_with_the_wrong_argument_type_is_rejected() {
+        let err = check("let f = fn(x: Int) -> Int {\n    return x\n}\nf(\"nope\")").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn a_lambda_can_be_passed_as_an_argument_and_called_inside() {
+        check(concat!(
+            "fn apply(f: fn(Int) -> Int, x: Int) -> Int {\n",
+            "    return f(x)\n",
+            "}\n",
+            "print(apply(fn(n: Int) -> Int {\n    return n * 2\n}, 21))"
+        ))
+        .expect("should type-check");
+    }
+
+    #[test]
+    fn a_plain_fn_referenced_bare_decays_to_a_closure_value() {
+        check(concat!(
+            "fn double(x: Int) -> Int {\n    return x * 2\n}\n",
+            "let f = double\n",
+            "print(f(21))"
+        ))
+        .expect("should type-check");
+    }
+
+    #[test]
+    fn an_infer_referenced_bare_is_still_rejected() {
+        let err = check(concat!(
+            "infer classify(x: Int) -> Bool\n",
+            "let f = classify"
+        ))
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn a_pure_function_cannot_call_a_closure_passed_to_it() {
+        let err = check(concat!(
+            "fn apply(f: fn(Int) -> Int, x: Int) -> Int effects [pure] {\n",
+            "    return f(x)\n",
+            "}\n"
+        ))
+        .unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn closures_stored_in_a_list_are_callable_by_index() {
+        check(concat!(
+            "let handlers = [fn(x: Int) -> Int {\n    return x + 1\n}, fn(x: Int) -> Int {\n    return x * 2\n}]\n",
+            "print(handlers[0](5))"
+        ))
+        .expect("should type-check");
     }
 
     #[test]

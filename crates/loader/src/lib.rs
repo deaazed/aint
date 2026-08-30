@@ -234,6 +234,10 @@ fn rename_type(ty: Type, map: &std::collections::HashMap<String, String>) -> Typ
         Type::Inference(inner) => Type::Inference(Box::new(rename_type(*inner, map))),
         Type::Distribution(inner) => Type::Distribution(Box::new(rename_type(*inner, map))),
         Type::Tool(inner) => Type::Tool(Box::new(rename_type(*inner, map))),
+        Type::Function(params, ret) => Type::Function(
+            params.into_iter().map(|p| rename_type(p, map)).collect(),
+            Box::new(rename_type(*ret, map)),
+        ),
         other @ (Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit) => other,
     }
 }
@@ -275,6 +279,15 @@ fn rename_expr(expr: Expr, map: &std::collections::HashMap<String, String>) -> E
             index: Box::new(rename_expr(*index, map)),
         },
         ExprKind::Await(inner) => ExprKind::Await(Box::new(rename_expr(*inner, map))),
+        ExprKind::Lambda {
+            params,
+            return_type,
+            body,
+        } => ExprKind::Lambda {
+            params: rename_params(params, map),
+            return_type: rename_type(return_type, map),
+            body: rename_block(body, map),
+        },
         other @ (ExprKind::Integer(_)
         | ExprKind::Float(_)
         | ExprKind::String(_)

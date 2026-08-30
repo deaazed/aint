@@ -1,0 +1,50 @@
+// A closure escaping the function that created it, proving capture is
+// real (not still "parent to globals"): `n` is `make_adder`'s own
+// local parameter, long gone by the time `add5`/`add10` are called.
+fn make_adder(n: Int) -> fn(Int) -> Int {
+    return fn(x: Int) -> Int {
+        return x + n
+    }
+}
+
+// A closure passed as an argument and called from inside another
+// function — the strategy-pattern shape this milestone exists for.
+fn apply_twice(f: fn(Int) -> Int, x: Int) -> Int {
+    return f(f(x))
+}
+
+fn main() -> Unit {
+    let add5 = make_adder(5)
+    let add10 = make_adder(10)
+    print(add5(1))
+    print(add10(1))
+
+    print(apply_twice(fn(x: Int) -> Int {
+        return x * 2
+    }, 3))
+
+    let handlers = [fn(x: Int) -> Int {
+        return x + 1
+    }, fn(x: Int) -> Int {
+        return x * x
+    }]
+    print(handlers[0](5))
+    print(handlers[1](5))
+
+    // A plain top-level `fn`, referenced bare, decays to the same
+    // closure value a lambda would.
+    let doubled = double
+    print(doubled(21))
+}
+
+fn double(x: Int) -> Int {
+    return x * 2
+}
+
+main()
+
+test "closures behave the same inside a test as they do at the top level" {
+    let add5 = make_adder(5)
+    assert add5(1) == 6
+    assert apply_twice(fn(x: Int) -> Int { return x + 1 }, 0) == 2
+}

@@ -1,4 +1,4 @@
-use crate::Span;
+use crate::{Block, Param, Span, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Expr {
@@ -38,6 +38,16 @@ pub enum ExprKind {
         index: Box<Expr>,
     },
     Await(Box<Expr>),
+    /// `fn(params) -> ReturnType { body }` in expression position
+    /// (milestone 30) — an anonymous, always-synchronous function
+    /// value. No `effects` clause: a lambda is untracked, exactly like
+    /// a top-level `fn` with none. See
+    /// `docs/milestones/30-closures/SPEC.md`.
+    Lambda {
+        params: Vec<Param>,
+        return_type: Type,
+        body: Block,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

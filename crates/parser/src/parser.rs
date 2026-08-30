@@ -300,6 +300,43 @@ impl Parser {
         ))
     }
 
+    /// Parses `fn(params) -> Type { body }` in EXPRESSION position — an
+    /// anonymous function value (milestone 30). No name, no `async`, no
+    /// `effects` clause — a lambda is always synchronous and untracked;
+    /// see `docs/milestones/30-closures/SPEC.md`.
+    fn parse_lambda_expr(&mut self) -> Result<Expr, ParseError> {
+        let fn_token = self.expect(TokenKind::Fn, "`fn`")?;
+        self.expect(TokenKind::LeftParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let (param_name, _) = self.expect_identifier()?;
+                self.expect(TokenKind::Colon, "`:`")?;
+                let (ty, _) = self.parse_type()?;
+                params.push(Param {
+                    name: param_name,
+                    ty,
+                });
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen, "`)`")?;
+        self.expect(TokenKind::Arrow, "`->`")?;
+        let (return_type, _) = self.parse_type()?;
+        let body = self.parse_block()?;
+        let span = Span::new(fn_token.span.start, body.span.end);
+        Ok(Expr::new(
+            ExprKind::Lambda {
+                params,
+                return_type,
+                body,
+            },
+            span,
+        ))
+    }
+
     /// Parses an optional `effects [ Effect, Effect, ... ]` clause —
     /// `fn`/`async fn` only, see
     /// `docs/milestones/13-effects/SPEC.md` for why `infer`/`tool`
@@ -470,6 +507,12 @@ impl Parser {
     /// that's the type checker's job now
     /// (`docs/milestones/09-typed-structured-inference/SPEC.md`).
     fn parse_type(&mut self) -> Result<(Type, Span), ParseError> {
+        // A closure's type (milestone 30) is the one type spelling that
+        // isn't a bare identifier — checked first, before the
+        // identifier-only path below even runs.
+        if self.check(&TokenKind::Fn) {
+            return self.parse_function_type();
+        }
         let (name, span) = self.expect_identifier()?;
         let ty = match name.as_str() {
             "Int" => Type::Int,
@@ -498,6 +541,32 @@ impl Parser {
             _ => Type::Enum(name),
         };
         Ok((ty, span))
+    }
+
+    /// Parses a closure's type in TYPE position: `fn(Type, Type) ->
+    /// Type` — bare parameter types, no names, the same shape
+    /// `List<T>` already uses for its own generic argument. Lets a
+    /// closure be a function's parameter/return type or a `List`
+    /// element type, not just a `let` binding's inferred type. See
+    /// `docs/milestones/30-closures/SPEC.md`.
+    fn parse_function_type(&mut self) -> Result<(Type, Span), ParseError> {
+        let fn_token = self.expect(TokenKind::Fn, "`fn`")?;
+        self.expect(TokenKind::LeftParen, "`(`")?;
+        let mut params = Vec::new();
+        if !self.check(&TokenKind::RightParen) {
+            loop {
+                let (ty, _) = self.parse_type()?;
+                params.push(ty);
+                if !self.matches(&TokenKind::Comma) {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RightParen, "`)`")?;
+        self.expect(TokenKind::Arrow, "`->`")?;
+        let (return_type, return_span) = self.parse_type()?;
+        let span = Span::new(fn_token.span.start, return_span.end);
+        Ok((Type::Function(params, Box::new(return_type)), span))
     }
 
     /// Parses `enum Name { Variant1 Variant2 ... }` — bare identifiers,
@@ -732,6 +801,7 @@ impl Parser {
                 self.advance();
                 Ok(Expr::new(ExprKind::Identifier(name), token.span))
             }
+            TokenKind::Fn => self.parse_lambda_expr(),
             TokenKind::LeftParen => {
                 self.advance();
                 let expr = self.parse_expr()?;
@@ -808,6 +878,10 @@ mod tests {
                 format!("(index {} {})", describe_expr(object), describe_expr(index))
             }
             ExprKind::Await(inner) => format!("(await {})", describe_expr(inner)),
+            ExprKind::Lambda { params, .. } => {
+                let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
+                format!("(lambda ({}))", names.join(" "))
+            }
         }
     }
 
@@ -1426,6 +1500,40 @@ mod tests {
                 assert_eq!(alias, "util");
             }
             other => panic!("expected ImportFile, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_a_lambda_expression() {
+        let stmt = parse_one_stmt("let f = fn(x: Int, y: Int) -> Int {\n    return x + y\n}");
+        match stmt.kind {
+            StmtKind::Let { value, .. } => match value.kind {
+                ExprKind::Lambda {
+                    params,
+                    return_type,
+                    ..
+                } => {
+                    assert_eq!(params.len(), 2);
+                    assert_eq!(params[0].name, "x");
+                    assert_eq!(return_type, Type::Int);
+                }
+                other => panic!("expected Lambda, got {other:?}"),
+            },
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_a_function_type_as_a_parameter_type() {
+        let stmt = parse_one_stmt("fn apply(f: fn(Int) -> Int, x: Int) -> Int { return f(x) }");
+        match stmt.kind {
+            StmtKind::Fn { params, .. } => {
+                assert_eq!(
+                    params[0].ty,
+                    Type::Function(vec![Type::Int], Box::new(Type::Int))
+                );
+            }
+            other => panic!("expected Fn, got {other:?}"),
         }
     }
 

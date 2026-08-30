@@ -53,11 +53,13 @@ Inference<T>          — the type of an unawaited infer call
 Tool<T>                — the type of an unawaited tool call
 Enum(name)             — a user-declared enum, compared nominally
 Distribution<T>         — T must be an enum
+fn(T, T, ...) -> T      — a closure's type (milestone 30)
 ```
 
 `Task<T>`, `Inference<T>`, and `Tool<T>` are never written as source
 syntax — the type checker computes them at a call-site's type when a
-value isn't `await`-ed.
+value isn't `await`-ed. `fn(...) -> T` is the one type spelling
+written as source that isn't a bare identifier; see §4.3.
 
 Static, nominal typing throughout. No implicit numeric coercion
 (`Int`/`Float` are distinct; no arithmetic mixes them). Equality
@@ -115,6 +117,36 @@ and does not run the body; `await`-ing it runs the body to
 completion. There is no way to run a `Task` in the background without
 eventually awaiting it — see `docs/milestones/25-real-application/
 SPEC.md`'s "background jobs" finding.
+
+**Closures (milestone 30).** `fn(params) -> ReturnType { ... }` in
+*expression* position — no name, no `async`, no `effects` clause — is a
+lambda: a first-class function value.
+
+```an
+let add_one = fn(x: Int) -> Int {
+    return x + 1
+}
+print(add_one(4))
+```
+
+A lambda is always synchronous and untracked (exactly like a top-level
+`fn` with no `effects` clause) — it can't be called from any
+`effects [...]`-declared function, and its own body isn't
+effect-checked against whatever function it's called from. A plain,
+synchronous, non-`infer`/`tool` top-level `fn`, referenced bare (not in
+call position), decays to the same closure value a lambda would;
+`async fn`/`infer`/`tool` references bare are still rejected, since
+calling the result would need `Task<T>`/`Inference<T>`/`Tool<T>` to
+interoperate with closures, which doesn't happen. A closure value can
+be called through any expression — an index into a `List<fn(...)
+-> T>`, an immediately-invoked lambda, another call's result — not
+just a bare name.
+
+Capture is by reference to the closure's defining scope, sound because
+nothing in AINT ever mutates a binding after creation — see
+`docs/milestones/30-closures/SPEC.md` for the full argument. Closures
+are interpreter-only: `aint run --vm` fails clearly (not silently) on
+a lambda expression or a call to a closure-holding variable — see §11.
 
 ### 4.4 `return`
 
@@ -376,6 +408,15 @@ it was found):
   file's path, with a line/column that's actually relative to the
   imported file's own source — `Span` carries no file identity yet.
   (same)
+- **Closures don't run under `aint run --vm`.** A lambda expression
+  fails clearly at IR lowering; calling a closure-holding variable by
+  name fails clearly at VM compilation (it was never in the VM's
+  compile-time function table). Both documented parity gaps, not
+  attempted. (§4.3, `docs/milestones/30-closures/SPEC.md`)
+- **No generics, structs, or interfaces/traits.** Closures (milestone
+  30) were deliberately the smallest lever for passing behavior around
+  — these stay out of scope until real framework-building shows what's
+  actually needed. (`ROADMAP.md`'s Phase 2 framing)
 - **No `Option<T>`/`Distribution<T>` construction syntax** — only
   specific natives produce them. (§5,
   `docs/milestones/25-real-application/SPEC.md`)

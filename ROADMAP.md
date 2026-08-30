@@ -208,13 +208,14 @@ graph into one flat program before the type checker, interpreter, IR
 compiler, or VM ever see it — none of those four crates change in any
 way that matters. See `docs/milestones/29-modularity/SPEC.md`.
 
-## 30 — Closures
+## 30 — Closures — done
 
 Functions as values — passed as arguments, returned, stored in a
 `List<T>`. The minimum lever needed to express strategy/observer/
 dependency-injection-style patterns without generics or structs, which
 stay out of scope. Interpreter-only; the bytecode VM and IR compiler
-reject a closure explicitly rather than miscompiling one.
+reject a closure explicitly rather than miscompiling one. See
+`docs/milestones/30-closures/SPEC.md`.
 
 ## 31 — Web framework ergonomics
 

@@ -1,7 +1,10 @@
+use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
 
 use aint_ast::{Block, Type};
+
+use crate::environment::Environment;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -51,12 +54,34 @@ pub enum Value {
     ToolCall(Rc<PendingToolCall>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub struct Function {
     pub name: String,
     pub params: Vec<String>,
     pub body: Block,
     pub is_async: bool,
+    /// The environment active where this function was defined —
+    /// `globals` for every top-level `fn` (unchanged from before
+    /// milestone 30), the enclosing scope for a `fn(...) -> T { ... }`
+    /// lambda expression. A call parents its frame to this instead of
+    /// always to `globals`; see `docs/milestones/30-closures/SPEC.md`
+    /// for the capture-by-reference-is-sound-because-nothing-mutates
+    /// argument.
+    pub captured_env: Rc<RefCell<Environment>>,
+}
+
+/// Compares only the declaration, not the captured environment —
+/// matching the pre-closures behavior exactly (every top-level `fn`'s
+/// implicit capture was always `globals`, never part of any
+/// comparison) and giving closures a defensible, cheap equality: same
+/// code and parameter names, regardless of which scope captured it.
+impl PartialEq for Function {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+            && self.params == other.params
+            && self.body == other.body
+            && self.is_async == other.is_async
+    }
 }
 
 /// The deferred computation behind a [`Value::Task`]: either a call to

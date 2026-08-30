@@ -37,6 +37,12 @@ pub enum Type {
     /// kept as its own type rather than reusing one of them — see
     /// `docs/milestones/11-typed-tools/SPEC.md`.
     Tool(Box<Type>),
+    /// A closure's type (milestone 30): parameter types, then the
+    /// return type. Only ever produced by a `fn(...) -> T { ... }`
+    /// lambda expression or a bare reference to a plain, synchronous,
+    /// non-`infer`/`tool` top-level `fn` — see
+    /// `docs/milestones/30-closures/SPEC.md`.
+    Function(Vec<Type>, Box<Type>),
 }
 
 impl fmt::Display for Type {
@@ -54,6 +60,16 @@ impl fmt::Display for Type {
             Type::Enum(name) => write!(f, "{name}"),
             Type::Distribution(inner) => write!(f, "Distribution<{inner}>"),
             Type::Tool(inner) => write!(f, "Tool<{inner}>"),
+            Type::Function(params, ret) => {
+                write!(f, "fn(")?;
+                for (i, param) in params.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{param}")?;
+                }
+                write!(f, ") -> {ret}")
+            }
         }
     }
 }

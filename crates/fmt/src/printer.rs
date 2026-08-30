@@ -367,6 +367,18 @@ impl Printer {
                     self.out.push(')');
                 }
             }
+            ExprKind::Lambda {
+                params,
+                return_type,
+                body,
+            } => {
+                self.out.push_str("fn(");
+                self.params(params);
+                self.out.push_str(") -> ");
+                self.out.push_str(&return_type.to_string());
+                self.out.push(' ');
+                self.block(body);
+            }
         }
     }
 }
