@@ -191,15 +191,23 @@ it is rejected independent of what was offered. See
 
 ```
 tool name(param: Type, ...) -> ReturnType
+tool name(param: Type, ...) -> ReturnType { body }
 ```
 
-Structurally identical to `infer`'s signature — also no body. Calling
-it without `await` produces a `Tool<ReturnType>`; `await`-ing it runs
-against `MockTool` (the only `tool` executor that exists — see §9,
-"Known gaps"). A `tool` can be called two ways: directly, from AINT
-code (`await my_tool(args)`), or requested by a model mid-inference
-(only for a `tool` named in the calling `infer`'s effective
-`available_tools`, per §4.6).
+Signature structurally identical to `infer`'s. Calling it without
+`await` produces a `Tool<ReturnType>`. A `tool` can be called two ways:
+directly, from AINT code (`await my_tool(args)`), or requested by a
+model mid-inference (only for a `tool` named in the calling `infer`'s
+effective `available_tools`, per §4.6).
+
+A body is optional (milestone 34). Without one, `await`-ing a tool
+runs against `MockTool` — the only executor a signature-only tool has.
+With one, `await`-ing it runs the body for real: ordinary AINT source,
+type-checked exactly like a `fn` body, able to call anything a `fn`
+can (stdlib functions included). An explicit `mock` for that tool name
+still wins over a real body when one is configured — mocking a tool is
+a statement that its real implementation shouldn't run for that test,
+not a fallback only consulted when no real implementation exists.
 
 ### 4.8 `import`
 
@@ -425,9 +433,11 @@ it was found):
 - **No `Int`/`String` conversion.** (§9, same)
 - **`aint test` cannot exercise a file with a blocking top-level
   statement.** (§10, same)
-- **Tool calls have no real backend** — `MockTool` is the only one
-  that has ever existed, live or in tests. (§7,
-  `docs/milestones/11-typed-tools/SPEC.md`)
+- **A tool's real implementation is always synchronous, and can't run
+  under `aint run --vm`.** `await` — the only way to invoke a tool
+  call at all — is unconditionally unsupported by the bytecode VM,
+  same as every other AI-facing operation. (§4.7, §6,
+  `docs/milestones/34-real-tools/SPEC.md`)
 - **`aint fmt` doesn't preserve comments** — refuses rather than
   deletes them. (§2, `docs/milestones/24-language-tooling/SPEC.md`)
 - **No LSP, autocomplete, or go-to-definition** — need real semantic

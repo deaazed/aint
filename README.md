@@ -89,10 +89,12 @@ file-backed database, password hashing, logging, and a hand-rolled
 HTTP/1.1 server, enough to build and run a real HTTP API entirely in
 AINT (`examples/customer_support/`); since milestone 29, `import
 "path" as alias` — a real AINT program can span more than one file;
-since milestone 30, closures (`fn(...) -> T { ... }` as a value); and
+since milestone 30, closures (`fn(...) -> T { ... }` as a value);
 since milestone 32, `aint scaffold "description" <path>` — generates a
 starter project from a plain-English description using the same model
-backend `aint run` does, always checked before it's reported as done.
+backend `aint run` does, always checked before it's reported as done;
+and since milestone 34, `tool name(params) -> Type { body }` — a real
+implementation a model's tool calls actually run, not just `MockTool`.
 
 What's deliberately not here yet: native compilation, a hosted
 package registry, diamond-shared imports, and an LSP beyond syntax

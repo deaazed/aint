@@ -196,6 +196,7 @@ impl TypeChecker {
                     name,
                     params,
                     return_type,
+                    ..
                 } => {
                     self.define(
                         name.clone(),
@@ -394,6 +395,7 @@ impl TypeChecker {
                 name,
                 params,
                 return_type,
+                body,
             } => {
                 // Same reasoning as the `Infer` arm just above - see
                 // `docs/milestones/11-typed-tools/SPEC.md`.
@@ -410,6 +412,35 @@ impl TypeChecker {
                     self.validate_type(&param.ty, stmt.span)?;
                 }
                 self.validate_type(return_type, stmt.span)?;
+
+                // A real implementation (milestone 34) is checked
+                // exactly like a plain `fn` body - untracked for
+                // effect-checking purposes, the same as a lambda's
+                // body: a tool is already its own effect boundary, so
+                // its body doesn't inherit whatever `effects` clause
+                // the surrounding function (if any) declared. See
+                // `docs/milestones/34-real-tools/SPEC.md`.
+                if let Some(body) = body {
+                    self.push_scope();
+                    for param in params {
+                        self.define(param.name.clone(), Binding::Variable(param.ty.clone()));
+                    }
+                    let previous_return_type =
+                        self.current_return_type.replace(return_type.clone());
+                    let previous_effects = self.current_effects.take();
+                    self.check_block(body)?;
+                    self.current_effects = previous_effects;
+                    self.current_return_type = previous_return_type;
+                    self.pop_scope();
+
+                    if *return_type != Type::Unit && !definitely_returns(&body.statements) {
+                        return Err(TypeError::MissingReturn {
+                            name: name.clone(),
+                            expected: return_type.clone(),
+                            span: body.span,
+                        });
+                    }
+                }
                 Ok(())
             }
             StmtKind::Enum { name, variants } => {
@@ -1732,6 +1763,26 @@ mod tests {
              print(await classify_cached(\"x\") == Sentiment_Positive)"
         )
         .is_ok());
+    }
+
+    #[test]
+    fn a_tool_with_a_real_body_type_checks_it() {
+        assert!(check(
+            "tool double(x: Int) -> Int {\n    return x * 2\n}\nprint(await double(21))"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn a_tool_body_missing_a_return_is_rejected() {
+        let err = check("tool double(x: Int) -> Int {\n    let y = x * 2\n}").unwrap_err();
+        assert!(matches!(err, TypeError::MissingReturn { .. }));
+    }
+
+    #[test]
+    fn a_tool_body_with_the_wrong_return_type_is_rejected() {
+        let err = check("tool double(x: Int) -> Int {\n    return \"nope\"\n}").unwrap_err();
+        assert!(matches!(err, TypeError::ReturnTypeMismatch { .. }));
     }
 
     #[test]

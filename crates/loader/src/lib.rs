@@ -360,10 +360,12 @@ fn rename_stmt(stmt: Stmt, map: &std::collections::HashMap<String, String>) -> S
             name,
             params,
             return_type,
+            body,
         } => StmtKind::Tool {
             name: rn(&name, map),
             params: rename_params(params, map),
             return_type: rename_type(return_type, map),
+            body: body.map(|block| rename_block(block, map)),
         },
         StmtKind::Test { name, body } => StmtKind::Test {
             name,

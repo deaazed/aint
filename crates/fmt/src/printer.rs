@@ -238,6 +238,7 @@ impl Printer {
                 name,
                 params,
                 return_type,
+                body,
             } => {
                 self.out.push_str("tool ");
                 self.out.push_str(name);
@@ -245,6 +246,10 @@ impl Printer {
                 self.params(params);
                 self.out.push_str(") -> ");
                 self.out.push_str(&return_type.to_string());
+                if let Some(body) = body {
+                    self.out.push(' ');
+                    self.block(body);
+                }
             }
             StmtKind::Test { name, body } => {
                 self.out.push_str("test ");

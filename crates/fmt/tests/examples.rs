@@ -185,13 +185,24 @@ fn stmt_eq(a: &Stmt, b: &Stmt) -> bool {
                 name: n1,
                 params: p1,
                 return_type: r1,
+                body: b1,
             },
             StmtKind::Tool {
                 name: n2,
                 params: p2,
                 return_type: r2,
+                body: b2,
             },
-        ) => n1 == n2 && params_eq(p1, p2) && r1 == r2,
+        ) => {
+            n1 == n2
+                && params_eq(p1, p2)
+                && r1 == r2
+                && match (b1, b2) {
+                    (Some(b1), Some(b2)) => block_eq(b1, b2),
+                    (None, None) => true,
+                    _ => false,
+                }
+        }
         (StmtKind::Test { name: n1, body: b1 }, StmtKind::Test { name: n2, body: b2 }) => {
             n1 == n2 && block_eq(b1, b2)
         }

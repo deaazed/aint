@@ -142,15 +142,44 @@ pub struct PendingInference {
     pub permissions: Option<Vec<String>>,
 }
 
-/// A `tool`-declared function: name, parameter *types* (not names —
-/// there's no body to bind them into, and milestone 12 needs the types
-/// to validate a model-requested call's arguments at runtime), and
-/// declared return type. The runtime counterpart of [`InferenceFn`].
+/// A `tool`-declared function: name, parameter *types* (milestone 12
+/// needs these to validate a model-requested call's arguments at
+/// runtime, independent of any body), declared return type, and — since
+/// milestone 34 — an optional real implementation. The runtime
+/// counterpart of [`InferenceFn`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolFn {
     pub name: String,
     pub params: Vec<Type>,
     pub return_type: Type,
+    /// `None` keeps a tool signature-only — routed through `MockTool`
+    /// whether called directly or requested by a model, exactly as
+    /// every tool behaved before milestone 34. `Some` runs for real,
+    /// the same way calling a plain `fn` does. See
+    /// `docs/milestones/34-real-tools/SPEC.md`.
+    pub body: Option<ToolBody>,
+}
+
+/// A tool's real implementation: parameter *names* (to bind argument
+/// values into, unlike `ToolFn::params`' types-only shape), the body
+/// itself, and the environment it closes over — same capture reasoning
+/// as [`Function::captured_env`]. Always `globals` in practice today
+/// (tools are declared at the top level), kept as a real captured
+/// environment rather than hardcoded for the same forward-compatibility
+/// reasoning `Function` already established.
+#[derive(Debug, Clone)]
+pub struct ToolBody {
+    pub param_names: Vec<String>,
+    pub block: Block,
+    pub captured_env: Rc<RefCell<Environment>>,
+}
+
+/// Compares only the declaration (param names, body), not the captured
+/// environment — same reasoning as `Function`'s manual `PartialEq`.
+impl PartialEq for ToolBody {
+    fn eq(&self, other: &Self) -> bool {
+        self.param_names == other.param_names && self.block == other.block
+    }
 }
 
 /// The deferred computation behind a [`Value::ToolCall`] — the runtime

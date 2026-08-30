@@ -1,0 +1,24 @@
+// A tool with a real implementation (milestone 34) — `tool` was
+// signature-only before this, routed through MockTool no matter how it
+// was called. `await`-ing it now runs the body directly.
+tool square(x: Int) -> Int {
+    return x * x
+}
+
+fn main() -> Unit {
+    print(await square(7))
+}
+
+main()
+
+// `mock` still wins when explicitly configured, even over a real
+// body — a test that mocks a tool is saying it doesn't want the real
+// implementation to run, not asking permission for it to run anyway.
+test "a tool's real body runs when nothing is mocked" {
+    assert await square(6) == 36
+}
+
+test "mock still overrides a tool's real body when configured" {
+    mock square -> 999
+    assert await square(6) == 999
+}

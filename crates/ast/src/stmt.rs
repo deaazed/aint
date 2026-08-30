@@ -78,15 +78,22 @@ pub enum StmtKind {
         name: String,
         variants: Vec<String>,
     },
-    /// A signature-only declaration: `tool name(params) -> Type`, no
-    /// body — structurally identical to `Infer` but kept as its own
-    /// variant, not shared, since they diverge starting the next
+    /// `tool name(params) -> Type`, optionally `{ body }`
+    /// (milestone 34) — structurally identical to `Infer` but kept as
+    /// its own variant, not shared, since they diverge starting the
     /// milestone each is involved in. See
     /// `docs/milestones/11-typed-tools/SPEC.md`.
+    ///
+    /// `body: None` is a signature-only declaration, unchanged from
+    /// before milestone 34 — routed through `MockTool` whether called
+    /// directly or requested by a model. `Some` gives the tool a real,
+    /// AINT-source implementation, run for real either way. See
+    /// `docs/milestones/34-real-tools/SPEC.md`.
     Tool {
         name: String,
         params: Vec<Param>,
         return_type: Type,
+        body: Option<Block>,
     },
     /// `test "name" { ... }` — a top-level, isolated test block. Inert
     /// during `aint run` (skipped entirely); `aint test` gives each one

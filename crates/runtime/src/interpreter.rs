@@ -16,7 +16,8 @@ use crate::stdlib;
 use crate::tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
 use crate::trace::{InferenceTraceOutcome, TokenUsage, TraceRecord};
 use crate::value::{
-    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, Task, ToolFn, Value,
+    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, Task, ToolBody,
+    ToolFn, Value,
 };
 
 /// Signals whether a `return` unwound out of the statement/block just
@@ -257,6 +258,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 name,
                 params,
                 return_type,
+                body,
             } => {
                 // Same reasoning as `StmtKind::Infer` just above, plus
                 // `self.tools_registry` (milestone 12): a model-driven
@@ -268,6 +270,14 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     name: name.clone(),
                     params: params.iter().map(|p| p.ty.clone()).collect(),
                     return_type: return_type.clone(),
+                    // A real implementation (milestone 34) captures
+                    // `env` exactly the way a top-level `fn` does —
+                    // see `Function::captured_env`'s doc comment.
+                    body: body.as_ref().map(|block| ToolBody {
+                        param_names: params.iter().map(|p| p.name.clone()).collect(),
+                        block: block.clone(),
+                        captured_env: Rc::clone(env),
+                    }),
                 });
                 self.tools_registry
                     .borrow_mut()
@@ -893,10 +903,17 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         Ok(value)
     }
 
-    /// The one place `self.tools.call(...)` is ever invoked — by a
+    /// The one place a tool call is actually answered — by a
     /// directly-called tool (`eval_tool_call`) or a model-requested one
-    /// (`call_requested_tool`). Captures a `Tool Call #N` trace record
-    /// regardless of success or failure. See
+    /// (`call_requested_tool`). Precedence (milestone 34): an explicit
+    /// `mock` always wins, even over a tool with a real implementation —
+    /// a test that mocks a tool is stating it doesn't want that tool's
+    /// real body to run, not asking permission for it to run anyway. A
+    /// real body is the fallback when nothing's mocked; `self.tools`
+    /// (`MockTool`)'s own "no mock configured" error is the last resort,
+    /// exactly as every tool without a body behaved before this
+    /// milestone. Captures a `Tool Call #N` trace record regardless of
+    /// which path answered it, or whether it failed. See
     /// `docs/milestones/14-ai-execution-tracing/SPEC.md`.
     async fn call_tool_traced(
         &self,
@@ -905,14 +922,24 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         span: Span,
     ) -> Result<Value, RuntimeError> {
         let start = Instant::now();
-        let result = self
-            .tools
-            .call(ToolRequest {
-                tool: tool.to_string(),
-                args: args.clone(),
-                span,
-            })
-            .await;
+        let result = match self.tools.get(tool) {
+            Some(value) => Ok(value),
+            None => {
+                let tool_fn = self.tools_registry.borrow().get(tool).cloned();
+                match tool_fn.as_ref().and_then(|f| f.body.as_ref()) {
+                    Some(body) => self.run_tool_body(body, args.clone()).await,
+                    None => {
+                        self.tools
+                            .call(ToolRequest {
+                                tool: tool.to_string(),
+                                args: args.clone(),
+                                span,
+                            })
+                            .await
+                    }
+                }
+            }
+        };
         let latency = start.elapsed();
 
         let id = self.next_tool_call_id.get();
@@ -927,6 +954,25 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         });
 
         result
+    }
+
+    /// Runs a tool's real implementation (milestone 34) to completion —
+    /// the tool-calling counterpart of `run_function`, same reasoning
+    /// throughout (parented to the tool's own captured environment, not
+    /// the caller's).
+    async fn run_tool_body(
+        &self,
+        body: &ToolBody,
+        args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
+        let call_env = Environment::child(&body.captured_env);
+        for (name, value) in body.param_names.iter().zip(args) {
+            call_env.borrow_mut().define(name.clone(), value);
+        }
+        match self.exec_block(&body.block, &call_env).await? {
+            Flow::Return(v) => Ok(v),
+            Flow::Normal => Ok(Value::Unit),
+        }
     }
 
     /// Checks a model's response against an `infer` call's declared
@@ -2415,6 +2461,68 @@ mod tests {
                     .mock("database_get_email", Value::String("a@b.com".to_string())),
             ),
             "a@b.com\n"
+        );
+    }
+
+    #[test]
+    fn a_tool_with_a_real_body_runs_it_directly_with_no_mock_configured() {
+        assert_eq!(
+            run_capturing(
+                "tool double(x: Int) -> Int {\n    return x * 2\n}\nprint(await double(21))"
+            ),
+            "42\n"
+        );
+    }
+
+    #[test]
+    fn a_tool_with_a_real_body_calling_stdlib_functions_runs_for_real() {
+        assert_eq!(
+            run_capturing(
+                "import string\n\
+                 tool greet(name: String) -> String {\n    return string_concat(\"Hi \", name)\n}\n\
+                 print(await greet(\"Ada\"))"
+            ),
+            "Hi Ada\n"
+        );
+    }
+
+    #[test]
+    fn an_explicit_mock_wins_over_a_tools_real_body() {
+        // A mock is a statement of intent — "don't run the real
+        // implementation for this test" — not a fallback only used
+        // when no real body exists. See `call_tool_traced`'s doc
+        // comment (milestone 34).
+        assert_eq!(
+            run_capturing_with_tools(
+                "tool double(x: Int) -> Int {\n    return x * 2\n}\nprint(await double(21))",
+                || crate::tool::MockTool::new().mock("double", Value::Int(999)),
+            ),
+            "999\n"
+        );
+    }
+
+    #[test]
+    fn a_model_requested_tool_call_runs_a_real_body_too() {
+        assert_eq!(
+            run_capturing_with_model_and_tools(
+                "infer agent(x: Int) -> Int\n\
+                 tool double(y: Int) -> Int {\n    return y * 2\n}\n\
+                 print(await agent(5))",
+                || {
+                    crate::model::MockModel::new().script(
+                        "agent",
+                        vec![
+                            crate::model::InferenceOutcome::CallTool {
+                                tool: "double".to_string(),
+                                args: vec![Value::Int(5)],
+                            },
+                            crate::model::InferenceOutcome::Answer(Value::Int(10)),
+                        ],
+                    )
+                },
+                crate::tool::MockTool::new,
+            ),
+            "10\n"
         );
     }
 

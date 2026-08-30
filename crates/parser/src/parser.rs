@@ -487,12 +487,22 @@ impl Parser {
         self.expect(TokenKind::RightParen, "`)`")?;
         self.expect(TokenKind::Arrow, "`->`")?;
         let (return_type, return_span) = self.parse_type()?;
-        let span = Span::new(tool_token.span.start, return_span.end);
+        // A body is optional (milestone 34) - a signature-only
+        // declaration (no `{`) keeps today's behavior exactly.
+        let (body, end) = if self.check(&TokenKind::LeftBrace) {
+            let block = self.parse_block()?;
+            let end = block.span.end;
+            (Some(block), end)
+        } else {
+            (None, return_span.end)
+        };
+        let span = Span::new(tool_token.span.start, end);
         Ok(Stmt::new(
             StmtKind::Tool {
                 name,
                 params,
                 return_type,
+                body,
             },
             span,
         ))
@@ -1251,6 +1261,7 @@ mod tests {
                 name,
                 params,
                 return_type,
+                body,
             } => {
                 assert_eq!(name, "database_get_email");
                 assert_eq!(
@@ -1261,6 +1272,7 @@ mod tests {
                     }]
                 );
                 assert_eq!(return_type, Type::String);
+                assert!(body.is_none());
             }
             other => panic!("expected Tool, got {other:?}"),
         }
@@ -1271,6 +1283,18 @@ mod tests {
         let stmt = parse_one_stmt("tool clock_now() -> Int");
         match stmt.kind {
             StmtKind::Tool { params, .. } => assert!(params.is_empty()),
+            other => panic!("expected Tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_tool_statement_with_a_body() {
+        let stmt = parse_one_stmt("tool double(x: Int) -> Int { return x * 2 }");
+        match stmt.kind {
+            StmtKind::Tool { body, .. } => {
+                assert!(body.is_some());
+                assert_eq!(body.unwrap().statements.len(), 1);
+            }
             other => panic!("expected Tool, got {other:?}"),
         }
     }

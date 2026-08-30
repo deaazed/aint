@@ -67,6 +67,16 @@ impl MockTool {
         self
     }
 
+    /// The configured response for `tool`, if any — lets a caller check
+    /// *whether* a mock exists without triggering `call`'s "no mock
+    /// configured" error. Used since milestone 34 so an explicit `mock`
+    /// always wins over a tool's real implementation: a test that mocks
+    /// a tool is stating it doesn't want that tool's real body to run,
+    /// even if one exists.
+    pub fn get(&self, tool: &str) -> Option<Value> {
+        self.responses.get(tool).cloned()
+    }
+
     pub async fn call(&self, request: ToolRequest) -> Result<Value, RuntimeError> {
         match self.responses.get(&request.tool) {
             Some(value) => Ok(value.clone()),

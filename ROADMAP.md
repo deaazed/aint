@@ -241,6 +241,15 @@ done. See `docs/milestones/32-ai-scaffolding/SPEC.md`.
 route table, verified live the same way the original was. See
 `docs/milestones/33-website-rebuild/SPEC.md`.
 
+## 34 — Real tool execution — done
+
+Not part of the original Phase 2 plan — added after confirming
+`MockTool` was still the only tool executor that has ever existed,
+undermining the language's own governance pitch. `tool name(params) ->
+Type { body }` now runs for real, whether called directly or requested
+by a model, with an explicit `mock` always taking precedence. See
+`docs/milestones/34-real-tools/SPEC.md`.
+
 ---
 
 ## Known hard problems, by category
