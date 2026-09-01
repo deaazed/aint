@@ -18,13 +18,29 @@ pub struct Lockfile {
 /// One resolved package - the root package itself (`path: None`) or a
 /// dependency reached transitively (`path: Some(..)`, always an
 /// absolute, canonicalized path - see `resolve.rs` for why this
-/// deliberately isn't root-relative yet).
+/// deliberately isn't root-relative yet). `path` always points at
+/// *where the resolved source actually lives on disk* - for a git
+/// dependency (milestone 36), that's its local cache directory, not
+/// the URL; `source` records where it actually came from, so the
+/// lockfile stays meaningful to a human reading it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LockedPackage {
     pub name: String,
     pub version: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub source: Option<GitSource>,
+}
+
+/// Where a git dependency actually came from, and the exact commit it
+/// resolved to - recorded even if `rev` (in `aint.toml`) was a moving
+/// branch name, so the lockfile stays reproducible the way
+/// `Cargo.lock` recording an exact git commit is. See SPEC.md.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GitSource {
+    pub git: String,
+    pub commit: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -77,11 +93,22 @@ mod tests {
                     name: "my-project".to_string(),
                     version: "0.1.0".to_string(),
                     path: None,
+                    source: None,
                 },
                 LockedPackage {
                     name: "some-lib".to_string(),
                     version: "0.2.0".to_string(),
                     path: Some("/abs/path/some-lib".to_string()),
+                    source: None,
+                },
+                LockedPackage {
+                    name: "git-lib".to_string(),
+                    version: "0.3.0".to_string(),
+                    path: Some("/abs/path/cache/git-lib".to_string()),
+                    source: Some(GitSource {
+                        git: "https://github.com/user/git-lib".to_string(),
+                        commit: "abc123".to_string(),
+                    }),
                 },
             ],
         };

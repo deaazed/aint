@@ -213,25 +213,38 @@ not a fallback only consulted when no real implementation exists.
 
 ```
 import module_name
-import "path/to/file.an" as alias
+import "./path/to/file.an" as alias
+import "package-name" as alias
 ```
 
 The bare-identifier form binds every native function a stdlib module
 provides into the current scope — see §9 for the full module list.
 
-The string-literal form (milestone 29) imports another `.an` file,
-relative to the importing file's own directory. Every top-level
-declaration in the imported file — `fn`, `enum` (and its
-`EnumName_Variant` identifiers), `tool`, `infer` — becomes available
-under `alias_name`. Resolution happens entirely before type-checking,
-in a separate `aint-loader` crate: the whole import graph is flattened
-into one ordinary `Program` first, so the type checker, interpreter, IR
-compiler, and VM never know a program came from more than one file. A
-file reached through `import "..." as ...` may only itself contain
-`fn`/`enum`/`tool`/`infer`/`import` at its top level — no `let`, no
-`test`, no bare statement that would fire as a side effect just because
-the file was imported. See
-`docs/milestones/29-modularity/SPEC.md`.
+The string-literal form imports another `.an` file's declarations under
+`alias_name`. A leading `./` or `../` (milestone 29) resolves relative
+to the importing file's own directory. Anything else (milestone 36) is
+a *package* import: resolved against the nearest `aint.toml`'s
+`aint.lock` walking up from the entry file, importing that dependency's
+`<path>/lib.an` — a package's library entry point, distinct from a
+program's `main.an`, the same split Rust's `lib.rs`/`main.rs` draws. A
+package import with no `aint.toml` above the entry file, an `aint.toml`
+with no `aint.lock` next to it, or a name not present in `aint.lock`
+each fail with their own specific, distinct error rather than one
+generic "not found" — see `aint-loader::LoadError`'s
+`NoPackageRoot`/`NoLockfile`/`UnknownPackage` variants.
+
+Either form makes every top-level declaration in the imported file —
+`fn`, `enum` (and its `EnumName_Variant` identifiers), `tool`, `infer`
+— available under `alias_name`. Resolution happens entirely before
+type-checking, in a separate `aint-loader` crate: the whole import
+graph is flattened into one ordinary `Program` first, so the type
+checker, interpreter, IR compiler, and VM never know a program came
+from more than one file. A file reached through `import "..." as ...`
+may only itself contain `fn`/`enum`/`tool`/`infer`/`import` at its top
+level — no `let`, no `test`, no bare statement that would fire as a
+side effect just because the file was imported. See
+`docs/milestones/29-modularity/SPEC.md` and
+`docs/milestones/36-git-dependencies/SPEC.md`.
 
 ### 4.9 `test` / `mock` / `assert` / `budget`
 
@@ -443,8 +456,13 @@ it was found):
 - **No LSP, autocomplete, or go-to-definition** — need real semantic
   indexing nothing in the pipeline exposes yet.
   (`docs/milestones/24-language-tooling/SPEC.md`)
-- **No real package registry** — `aint add` only takes local paths.
-  (`docs/milestones/23-package-manager/SPEC.md`)
+- **No hosted package registry** — `aint add` takes a local path or a
+  git URL (milestone 36), never a bare name looked up somewhere; there's
+  still no server, database, or domain, and none is planned. A
+  name → URL index (so `aint add some-lib` works without a real URL)
+  is real, additive work, not attempted.
+  (`docs/milestones/23-package-manager/SPEC.md`,
+  `docs/milestones/36-git-dependencies/SPEC.md`)
 - **`http_serve` handles one connection at a time**, by construction —
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.

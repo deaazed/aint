@@ -56,15 +56,22 @@ enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
-    /// Add a local path dependency to the current package's
-    /// `aint.toml`, then re-resolve and re-lock the whole dependency
-    /// graph. There's no registry yet — see
-    /// docs/milestones/23-package-manager/SPEC.md — so this is the
-    /// only form `aint add` takes.
+    /// Add a dependency (a local path, or — milestone 36 — a git URL)
+    /// to the current package's `aint.toml`, then re-resolve and
+    /// re-lock the whole dependency graph. There's still no hosted
+    /// registry — see docs/milestones/36-git-dependencies/SPEC.md —
+    /// so `--git` always takes a real URL, never a bare name.
     Add {
         /// Path to the dependency's own package directory (one
-        /// containing its own `aint.toml`).
-        path: PathBuf,
+        /// containing its own `aint.toml`). Omit when using `--git`.
+        path: Option<PathBuf>,
+        /// A git URL to depend on instead of a local path.
+        #[arg(long, conflicts_with = "path")]
+        git: Option<String>,
+        /// With `--git`: a tag, branch, or commit to pin to. Omit to
+        /// resolve the default branch once, at first use.
+        #[arg(long, requires = "git")]
+        rev: Option<String>,
     },
     /// Parse and type-check a file without running it. Exit code
     /// reflects success; nothing is printed on success (matching
@@ -118,7 +125,7 @@ fn main() -> ExitCode {
             Command::Run { path, vm: true } => run_vm(&path),
             Command::Test { path } => test(&path),
             Command::Init { path } => init(&path),
-            Command::Add { path } => add(&path),
+            Command::Add { path, git, rev } => add(path, git, rev),
             Command::Check { path } => check(&path),
             Command::Fmt { path, check } => fmt(&path, check),
             Command::Scaffold { description, path } => scaffold(&description, &path),
@@ -373,13 +380,17 @@ fn init(path: &Path) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `aint add --path` (milestone 23): adds a local path dependency to
-/// the current directory's `aint.toml`, then re-resolves and
-/// re-writes `aint.lock` for the whole graph — not just appending the
-/// one new entry, since adding one dependency can change what the
-/// full, flattened graph looks like (a shared transitive dependency,
-/// a newly-introduced cycle, and so on).
-fn add(dep_path: &Path) -> ExitCode {
+/// `aint add` (milestone 23; git sources since milestone 36): adds a
+/// dependency — a local path, or a git URL — to the current
+/// directory's `aint.toml`, then re-resolves and re-writes `aint.lock`
+/// for the whole graph — not just appending the one new entry, since
+/// adding one dependency can change what the full, flattened graph
+/// looks like (a shared transitive dependency, a newly-introduced
+/// cycle, and so on). `clap`'s `conflicts_with`/`requires` on the
+/// `Command::Add` variant already guarantee `path` and `git` can't
+/// both be set, and `rev` can't appear without `git`; whether *neither*
+/// `path` nor `git` was given still needs checking here.
+fn add(path: Option<PathBuf>, git: Option<String>, rev: Option<String>) -> ExitCode {
     let cwd = match std::env::current_dir() {
         Ok(dir) => dir,
         Err(err) => {
@@ -396,21 +407,46 @@ fn add(dep_path: &Path) -> ExitCode {
         }
     };
 
-    let dep_manifest = match aint_package::Manifest::read_from_dir(dep_path) {
-        Ok(manifest) => manifest,
-        Err(err) => {
-            eprintln!("error: {err}");
-            return ExitCode::FAILURE;
-        }
+    let (name, dependency, source_description) = if let Some(url) = git {
+        let (dep_dir, _source) = match aint_package::materialize_git(&url, rev.as_deref()) {
+            Ok(result) => result,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let dep_manifest = match aint_package::Manifest::read_from_dir(&dep_dir) {
+            Ok(manifest) => manifest,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let name = dep_manifest.package.name.clone();
+        let dependency = aint_package::Dependency::Git {
+            git: url.clone(),
+            rev: rev.clone(),
+        };
+        (name, dependency, format!("git: {url}"))
+    } else if let Some(dep_path) = path {
+        let dep_manifest = match aint_package::Manifest::read_from_dir(&dep_path) {
+            Ok(manifest) => manifest,
+            Err(err) => {
+                eprintln!("error: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let name = dep_manifest.package.name.clone();
+        let dependency = aint_package::Dependency::Path {
+            path: dep_path.display().to_string(),
+        };
+        (name, dependency, format!("path: {}", dep_path.display()))
+    } else {
+        eprintln!("error: `aint add` needs either a path or `--git <url>`");
+        return ExitCode::FAILURE;
     };
 
-    let name = dep_manifest.package.name.clone();
-    manifest.dependencies.insert(
-        name.clone(),
-        aint_package::Dependency {
-            path: dep_path.display().to_string(),
-        },
-    );
+    manifest.dependencies.insert(name.clone(), dependency);
     if let Err(err) = manifest.write_to_dir(&cwd) {
         eprintln!("error: {err}");
         return ExitCode::FAILURE;
@@ -428,7 +464,7 @@ fn add(dep_path: &Path) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    println!("added `{name}` (path: {})", dep_path.display());
+    println!("added `{name}` ({source_description})");
     ExitCode::SUCCESS
 }
 

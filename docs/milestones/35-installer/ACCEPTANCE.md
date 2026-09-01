@@ -34,16 +34,19 @@ them — no new hosting, everything served by GitHub itself.
 
 ## Known, honestly-stated gaps
 
-- **The actual download path (a real tag, a real release, a real
-  `curl`/`Invoke-WebRequest` fetch) is unverified as of this
-  `ACCEPTANCE.md`.** Nothing has been tagged yet — pushing `v0.1.0` (or
-  similar) is a real, visible, external action (a public GitHub
-  Release), held for explicit confirmation rather than done
-  unilaterally while writing this milestone. What's verified here is
-  everything that *doesn't* require one: script syntax, the
-  unsupported-platform error path, and the workflow's own YAML
-  structure. The first real tag push *is* this milestone's true
-  end-to-end test — to be confirmed once pushed.
+- **The actual download path is now verified.** `v0.1.0` was tagged and
+  pushed; the first real run built all four targets but failed at the
+  last step — the default `GITHUB_TOKEN` had no `contents: write`
+  permission, so `softprops/action-gh-release` couldn't create the
+  release (fixed in `b6cba5a`, then the tag was moved onto that commit
+  and re-pushed). The second run published a real GitHub Release with
+  all four assets. `install.ps1` was then run for real against it
+  (`AINT_INSTALL_DIR` pointed at a scratch directory) and the resulting
+  `aint.exe` printed `aint 0.1.0` and ran correctly. Getting this far
+  also surfaced that the repository itself was still private —
+  unauthenticated downloads 404 regardless of what the release contains
+  — confirmed directly with `curl`/`Invoke-WebRequest` before and after
+  flipping visibility. The repository is now public.
 - **No `linux-aarch64` build** — the matrix only covers Linux x86_64;
   `install.sh` fails clearly (not a 404) if run on Linux/aarch64,
   naming the gap directly rather than guessing.
@@ -57,5 +60,5 @@ See `SPEC.md`'s "Explicitly out of scope."
 ## Outcome
 
 Satisfied by `.github/workflows/release.yml`, `install.sh`,
-`install.ps1`, and `README.md`'s updated install section — pending the
-first real tag push to verify the download path end to end.
+`install.ps1`, and `README.md`'s updated install section — verified end
+to end against a real, public `v0.1.0` release.

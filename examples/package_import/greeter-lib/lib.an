@@ -1,0 +1,10 @@
+// A package's library entry point (milestone 36) - what a bare-name
+// `import "greeter-lib" as ..." resolves to, distinct from a
+// program's own main.an. Nothing here is special beyond the
+// filename: any fn/enum/tool/infer declared at the top level is
+// importable, exactly like a relative-file import (milestone 29).
+import string
+
+fn greet(name: String) -> String effects [pure] {
+    return string_concat("Hello from greeter-lib, ", name)
+}

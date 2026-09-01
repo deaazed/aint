@@ -5,12 +5,20 @@
 //! a single, ordinary, flat `Program`, exactly as they did before this
 //! crate existed. See `docs/milestones/29-modularity/SPEC.md`.
 //!
+//! Since milestone 36, `import "name" as alias` (no leading `./`/`../`)
+//! is a *package* import instead of a relative-file one: resolved
+//! against the current package's `aint.lock` (found by walking up from
+//! the entry file's directory for the nearest `aint.toml`), importing
+//! `<resolved-path>/lib.an` — a package's library entry point, distinct
+//! from `main.an`'s program entry point. See
+//! `docs/milestones/36-git-dependencies/SPEC.md`.
+//!
 //! `aint check`/`run`/`test`/`run --vm` all call [`load`] where they used
 //! to call [`aint_parser::parse_source`] directly. `aint fmt` does not —
 //! formatting a file must reproduce its own literal `import "..." as
 //! ...` statements, not resolve them.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -50,6 +58,28 @@ pub enum LoadError {
         file: String,
         span: Span,
     },
+    /// `import "name" as alias` (milestone 36) where `name` isn't a
+    /// key in the current package's resolved `aint.lock` — a typo, or
+    /// a dependency that was never `aint add`-ed.
+    UnknownPackage {
+        name: String,
+        span: Span,
+    },
+    /// `import "name" as alias` was used, but no `aint.toml` was found
+    /// walking up from the entry file's directory — there's no
+    /// package for a bare name to resolve against.
+    NoPackageRoot {
+        name: String,
+        span: Span,
+    },
+    /// A package root (`aint.toml`) exists, but `aint.lock` doesn't —
+    /// `aint add`/`aint init` haven't been run, or the lockfile was
+    /// deleted. Distinct from `NoPackageRoot` so the fix is obvious.
+    NoLockfile {
+        name: String,
+        span: Span,
+    },
+    InvalidLockfile(aint_package::LockfileError),
 }
 
 impl fmt::Display for LoadError {
@@ -72,6 +102,22 @@ impl fmt::Display for LoadError {
                 "{file}:{}: only fn/enum/tool/infer/import declarations are allowed at the top level of an imported file",
                 span.start
             ),
+            LoadError::UnknownPackage { name, span } => write!(
+                f,
+                "{}: no package named `{name}` in aint.lock — run `aint add` first?",
+                span.start
+            ),
+            LoadError::NoPackageRoot { name, span } => write!(
+                f,
+                "{}: import \"{name}\" as ... names a package, but no aint.toml was found above this file",
+                span.start
+            ),
+            LoadError::NoLockfile { name, span } => write!(
+                f,
+                "{}: import \"{name}\" as ... names a package, but no aint.lock exists yet — run `aint add`/`aint init` first",
+                span.start
+            ),
+            LoadError::InvalidLockfile(err) => write!(f, "{err}"),
         }
     }
 }
@@ -79,23 +125,110 @@ impl fmt::Display for LoadError {
 impl std::error::Error for LoadError {}
 
 /// Loads `entry_path`, resolving every cross-file `import "path" as
-/// alias` it (transitively) reaches, into one flat [`Program`].
+/// alias` it (transitively) reaches, into one flat [`Program`]. A bare
+/// name (no leading `./`/`../`) is a package import, resolved once
+/// against the package rooted at (or above) `entry_path` — see the
+/// module doc comment.
 pub fn load(entry_path: &Path) -> Result<Program, LoadError> {
+    let packages = PackageContext::discover(entry_path)?;
     let mut visited = HashSet::new();
     let mut stack = Vec::new();
-    let statements = resolve_file(entry_path, None, &mut visited, &mut stack)?;
+    let statements = resolve_file(entry_path, None, &mut visited, &mut stack, &packages)?;
     Ok(Program { statements })
+}
+
+/// Whether, and how, a package import can be resolved for this
+/// program — computed once, from the entry file, up front, so a bare
+/// `import "name" as alias` anywhere in the whole graph can produce a
+/// specific, accurate error instead of a generic "not found."
+enum PackageContext {
+    /// No `aint.toml` found walking up from the entry file at all.
+    NoRoot,
+    /// An `aint.toml` was found, but no `aint.lock` sits next to it.
+    NoLockfile,
+    Resolved(HashMap<String, PathBuf>),
+}
+
+impl PackageContext {
+    fn discover(entry_path: &Path) -> Result<Self, LoadError> {
+        let start_dir = entry_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        let Some(root) = find_package_root(&start_dir) else {
+            return Ok(PackageContext::NoRoot);
+        };
+        let lockfile_path = root.join(aint_package::LOCKFILE_FILE_NAME);
+        if !lockfile_path.exists() {
+            return Ok(PackageContext::NoLockfile);
+        }
+        let text = std::fs::read_to_string(&lockfile_path).map_err(|err| LoadError::Io {
+            path: lockfile_path.display().to_string(),
+            message: err.to_string(),
+        })?;
+        let lockfile = aint_package::Lockfile::parse(&text).map_err(LoadError::InvalidLockfile)?;
+        let packages = lockfile
+            .packages
+            .into_iter()
+            .filter_map(|package| Some((package.name, PathBuf::from(package.path?))))
+            .collect();
+        Ok(PackageContext::Resolved(packages))
+    }
+
+    /// Resolves `name` to its library entry point (`<path>/lib.an`),
+    /// or the specific reason it couldn't be.
+    fn resolve(&self, name: &str, span: Span) -> Result<PathBuf, LoadError> {
+        match self {
+            PackageContext::NoRoot => Err(LoadError::NoPackageRoot {
+                name: name.to_string(),
+                span,
+            }),
+            PackageContext::NoLockfile => Err(LoadError::NoLockfile {
+                name: name.to_string(),
+                span,
+            }),
+            PackageContext::Resolved(packages) => match packages.get(name) {
+                Some(path) => Ok(path.join("lib.an")),
+                None => Err(LoadError::UnknownPackage {
+                    name: name.to_string(),
+                    span,
+                }),
+            },
+        }
+    }
+}
+
+/// A leading `./` or `../` means a relative file import; anything else
+/// is a package name (milestone 36).
+fn is_relative_import(path: &str) -> bool {
+    path.starts_with("./") || path.starts_with("../")
+}
+
+/// Walks up from `dir` looking for the nearest ancestor containing
+/// `aint.toml` — the same "search upward for the nearest manifest"
+/// convention most package-based tools use.
+fn find_package_root(dir: &Path) -> Option<PathBuf> {
+    let mut current = dir.canonicalize().ok()?;
+    loop {
+        if current.join(aint_package::MANIFEST_FILE_NAME).is_file() {
+            return Some(current);
+        }
+        current = current.parent()?.to_path_buf();
+    }
 }
 
 /// Resolves one file into its final, flattened statement list.
 /// `alias` is `None` only for the entry file — every imported file has
 /// one, and gets every one of its top-level declarations (and every
 /// reference to them, inside its own source) prefixed with it.
+/// `packages` is threaded through unchanged - it's resolved once, from
+/// the entry file, not re-discovered per imported file.
 fn resolve_file(
     path: &Path,
     alias: Option<&str>,
     visited: &mut HashSet<PathBuf>,
     stack: &mut Vec<PathBuf>,
+    packages: &PackageContext,
 ) -> Result<Vec<Stmt>, LoadError> {
     let canonical = path.canonicalize().map_err(|err| LoadError::Io {
         path: path.display().to_string(),
@@ -139,6 +272,7 @@ fn resolve_file(
     let mut flat = Vec::new();
     let mut seen_aliases = HashSet::new();
     for stmt in program.statements {
+        let span = stmt.span;
         match stmt.kind {
             StmtKind::ImportFile {
                 path: rel_path,
@@ -150,15 +284,20 @@ fn resolve_file(
                         alias: import_alias,
                     });
                 }
+                let target = if is_relative_import(&rel_path) {
+                    dir.join(&rel_path)
+                } else {
+                    packages.resolve(&rel_path, span)?
+                };
                 let imported =
-                    resolve_file(&dir.join(&rel_path), Some(&import_alias), visited, stack)?;
+                    resolve_file(&target, Some(&import_alias), visited, stack, packages)?;
                 flat.extend(imported);
             }
             other => {
                 if alias.is_some() {
-                    validate_module_top_level(&other, stmt.span, &canonical)?;
+                    validate_module_top_level(&other, span, &canonical)?;
                 }
-                flat.push(Stmt::new(other, stmt.span));
+                flat.push(Stmt::new(other, span));
             }
         }
     }
@@ -529,5 +668,112 @@ mod tests {
 
         let err = load(&entry).expect_err("should fail to resolve");
         assert!(matches!(err, LoadError::Io { .. }));
+    }
+
+    /// Writes a real `aint.toml` + `aint.lock` at `ws.root/pkg`,
+    /// locking `dep_name` against `dep_dir`'s canonical path - real
+    /// `aint-package` types, not a hand-rolled TOML string, matching
+    /// the "genuinely reads the filesystem, don't mock it" reasoning
+    /// `aint-package`'s own tests already follow.
+    fn write_locked_package(ws: &TempWorkspace, dep_name: &str, dep_dir: &Path) -> PathBuf {
+        let pkg_dir = ws.root.join("pkg");
+        fs::create_dir_all(&pkg_dir).expect("should create pkg dir");
+        aint_package::Manifest::new("my-project", "0.1.0")
+            .write_to_dir(&pkg_dir)
+            .expect("should write manifest");
+        let lockfile = aint_package::Lockfile {
+            packages: vec![
+                aint_package::LockedPackage {
+                    name: "my-project".to_string(),
+                    version: "0.1.0".to_string(),
+                    path: None,
+                    source: None,
+                },
+                aint_package::LockedPackage {
+                    name: dep_name.to_string(),
+                    version: "0.1.0".to_string(),
+                    path: Some(dep_dir.canonicalize().unwrap().display().to_string()),
+                    source: None,
+                },
+            ],
+        };
+        lockfile
+            .write_to_dir(&pkg_dir)
+            .expect("should write lockfile");
+        pkg_dir
+    }
+
+    #[test]
+    fn a_bare_name_import_resolves_via_the_lockfile_to_lib_an() {
+        let ws = TempWorkspace::new("package_import");
+        let dep_dir = ws
+            .write(
+                "dep/lib.an",
+                "fn greet(name: String) -> String {\n    return name\n}\n",
+            )
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        aint_package::Manifest::new("some-lib", "0.1.0")
+            .write_to_dir(&dep_dir)
+            .expect("should write dep manifest");
+
+        write_locked_package(&ws, "some-lib", &dep_dir);
+        let entry = ws.write(
+            "pkg/main.an",
+            "import \"some-lib\" as lib\nprint(lib_greet(\"Ada\"))\n",
+        );
+
+        let program = load(&entry).expect("should resolve a package import");
+        let has_renamed_fn = program
+            .statements
+            .iter()
+            .any(|s| matches!(&s.kind, StmtKind::Fn { name, .. } if name == "lib_greet"));
+        assert!(
+            has_renamed_fn,
+            "expected a renamed lib_greet function, got {:?}",
+            program.statements
+        );
+    }
+
+    #[test]
+    fn an_unknown_package_name_is_a_clear_error() {
+        let ws = TempWorkspace::new("unknown_package");
+        let dep_dir = ws
+            .write("dep/lib.an", "fn f() -> Unit {}\n")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        aint_package::Manifest::new("some-lib", "0.1.0")
+            .write_to_dir(&dep_dir)
+            .expect("should write dep manifest");
+        write_locked_package(&ws, "some-lib", &dep_dir);
+        let entry = ws.write("pkg/main.an", "import \"not-a-real-package\" as x\n");
+
+        let err = load(&entry).expect_err("should reject an unknown package name");
+        assert!(matches!(err, LoadError::UnknownPackage { .. }));
+    }
+
+    #[test]
+    fn a_package_import_with_no_aint_toml_above_is_a_clear_error() {
+        let ws = TempWorkspace::new("no_package_root");
+        let entry = ws.write("standalone/main.an", "import \"some-lib\" as lib\n");
+
+        let err = load(&entry).expect_err("should reject with no package root");
+        assert!(matches!(err, LoadError::NoPackageRoot { .. }));
+    }
+
+    #[test]
+    fn a_package_import_with_no_lockfile_is_a_clear_error() {
+        let ws = TempWorkspace::new("no_lockfile");
+        let pkg_dir = ws.root.join("pkg");
+        fs::create_dir_all(&pkg_dir).expect("should create pkg dir");
+        aint_package::Manifest::new("my-project", "0.1.0")
+            .write_to_dir(&pkg_dir)
+            .expect("should write manifest");
+        let entry = ws.write("pkg/main.an", "import \"some-lib\" as lib\n");
+
+        let err = load(&entry).expect_err("should reject with no aint.lock");
+        assert!(matches!(err, LoadError::NoLockfile { .. }));
     }
 }

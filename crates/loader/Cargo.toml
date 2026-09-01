@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Resolves cross-file `import \"path\" as alias` (milestone 29) into one flat aint_ast::Program before any other crate sees a program."
+description = "Resolves cross-file `import \"path\" as alias` (milestone 29), including package imports over aint.lock (milestone 36), into one flat aint_ast::Program before any other crate sees a program."
 
 [dependencies]
 aint-ast = { path = "../ast" }
 aint-parser = { path = "../parser" }
+aint-package = { path = "../package" }

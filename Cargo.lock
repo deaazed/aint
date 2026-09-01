@@ -52,6 +52,7 @@ name = "aint-loader"
 version = "0.1.0"
 dependencies = [
  "aint-ast",
+ "aint-package",
  "aint-parser",
 ]
 

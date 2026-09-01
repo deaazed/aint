@@ -26,13 +26,23 @@ pub struct PackageMetadata {
     pub version: String,
 }
 
-/// A dependency's declaration in `[dependencies]`. `path` only —
-/// there's no registry to name a version-ranged dependency against
-/// yet (see SPEC.md), so this deliberately isn't an enum with a
-/// registry variant nobody could satisfy.
+/// A dependency's declaration in `[dependencies]` — a local path, or
+/// (milestone 36) a git source. `#[serde(untagged)]`: TOML's own shape
+/// (`{ path = ".." }` vs `{ git = "..", rev = ".." }`) already
+/// disambiguates which variant a table is, so no explicit tag field is
+/// needed. Deliberately not a third, registry-backed variant — there's
+/// still no name index to resolve a bare name against (see SPEC.md).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Dependency {
-    pub path: String,
+#[serde(untagged)]
+pub enum Dependency {
+    Path {
+        path: String,
+    },
+    Git {
+        git: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        rev: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,8 +123,38 @@ mod tests {
         let mut manifest = Manifest::new("my-project", "0.1.0");
         manifest.dependencies.insert(
             "some-lib".to_string(),
-            Dependency {
+            Dependency::Path {
                 path: "../some-lib".to_string(),
+            },
+        );
+        let text = manifest.to_toml_string();
+        let parsed = Manifest::parse(&text).expect("should parse what we just wrote");
+        assert_eq!(parsed, manifest);
+    }
+
+    #[test]
+    fn a_git_dependency_round_trips_through_toml() {
+        let mut manifest = Manifest::new("my-project", "0.1.0");
+        manifest.dependencies.insert(
+            "some-lib".to_string(),
+            Dependency::Git {
+                git: "https://github.com/user/some-lib".to_string(),
+                rev: Some("v1.2.0".to_string()),
+            },
+        );
+        let text = manifest.to_toml_string();
+        let parsed = Manifest::parse(&text).expect("should parse what we just wrote");
+        assert_eq!(parsed, manifest);
+    }
+
+    #[test]
+    fn a_git_dependency_with_no_rev_round_trips_too() {
+        let mut manifest = Manifest::new("my-project", "0.1.0");
+        manifest.dependencies.insert(
+            "some-lib".to_string(),
+            Dependency::Git {
+                git: "https://github.com/user/some-lib".to_string(),
+                rev: None,
             },
         );
         let text = manifest.to_toml_string();

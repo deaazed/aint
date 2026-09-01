@@ -12,10 +12,11 @@
 //! bare name or version range against, and none is built here either
 //! (see SPEC.md).
 
+mod git;
 mod lockfile;
 mod manifest;
 mod resolve;
 
-pub use lockfile::{LockedPackage, Lockfile, LockfileError, LOCKFILE_FILE_NAME};
+pub use lockfile::{GitSource, LockedPackage, Lockfile, LockfileError, LOCKFILE_FILE_NAME};
 pub use manifest::{Dependency, Manifest, ManifestError, PackageMetadata, MANIFEST_FILE_NAME};
-pub use resolve::{resolve, ResolveError};
+pub use resolve::{materialize_git, resolve, ResolveError};

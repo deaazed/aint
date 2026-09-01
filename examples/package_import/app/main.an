@@ -1,0 +1,13 @@
+// A bare-name import - "greeter-lib", no leading ./ or ../ - resolves
+// through this package's aint.lock instead of a relative file path
+// (milestone 36). aint.lock isn't committed here: it records an
+// absolute, machine-specific path to the resolved dependency (see
+// crates/package/src/lockfile.rs), so from a fresh checkout run
+// `aint add ../greeter-lib` once from this directory to generate your
+// own, then `aint run main.an`. The same connection also works for a
+// git dependency (`aint add --git <url>`) - once materialized into
+// the local git cache, it's resolved and imported exactly the same
+// way; see docs/milestones/36-git-dependencies/SPEC.md.
+import "greeter-lib" as greeter
+
+print(greeter_greet("Ada"))

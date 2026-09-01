@@ -258,11 +258,16 @@ release workflow now builds real binaries on a tagged push, and
 everything served by GitHub. See
 `docs/milestones/35-installer/SPEC.md`.
 
-## 36 — Package dependencies over git
+## 36 — Package dependencies over git — done
 
-In progress. `aint add`'s local-path-only limitation, resolved the
-same way Go modules do it: a dependency can name a git URL, no hosted
-registry required. See `docs/milestones/36-git-dependencies/SPEC.md`.
+`aint add`'s local-path-only limitation, resolved the same way Go
+modules do it: a dependency can name a git URL, no hosted registry
+required. Also closes a gap named in both milestone 23's and milestone
+29's own specs: `aint-package` and `aint-loader` had been disconnected
+the entire time — a resolved dependency was never actually
+`import`-able. A bare-name `import "name" as alias` now resolves
+through `aint.lock` to that package's `lib.an`. See
+`docs/milestones/36-git-dependencies/SPEC.md`.
 
 ---
 

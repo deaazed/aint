@@ -1,19 +1,22 @@
 //! Builds the flattened, deduplicated dependency graph a `Lockfile`
 //! records - a depth-first walk from the root package's manifest,
-//! following each `path` dependency to its own `aint.toml` and
-//! recursing. Two things make this a real resolution algorithm and
-//! not just "copy every path into a list": cycle detection (A depends
-//! on B depends on A) and diamond-conflict detection (two different
-//! packages both depending on something named `x`, but at two
-//! different, unrelated paths). See
-//! `docs/milestones/23-package-manager/SPEC.md`.
+//! following each dependency (a local `path`, or, since milestone 36,
+//! a `git` source materialized into a local cache first) to its own
+//! `aint.toml` and recursing. Two things make this a real resolution
+//! algorithm and not just "copy every path into a list": cycle
+//! detection (A depends on B depends on A) and diamond-conflict
+//! detection (two different packages both depending on something
+//! named `x`, but at two different, unrelated paths). See
+//! `docs/milestones/23-package-manager/SPEC.md` and
+//! `docs/milestones/36-git-dependencies/SPEC.md`.
 
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::lockfile::{LockedPackage, Lockfile};
-use crate::manifest::{Manifest, ManifestError};
+use crate::git;
+use crate::lockfile::{GitSource, LockedPackage, Lockfile};
+use crate::manifest::{Dependency, Manifest, ManifestError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolveError {
@@ -43,6 +46,15 @@ pub enum ResolveError {
     Cycle {
         cycle: Vec<String>,
     },
+    /// `git clone`/`fetch`/`checkout`/`rev-parse` failed - a missing
+    /// `git` binary, a bad URL, a `rev` that doesn't exist, or a
+    /// genuine network failure on a cache miss. `message` is `git`'s
+    /// own stderr, unmodified. See
+    /// `docs/milestones/36-git-dependencies/SPEC.md`.
+    Git {
+        url: String,
+        message: String,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -65,6 +77,7 @@ impl fmt::Display for ResolveError {
             ResolveError::Cycle { cycle } => {
                 write!(f, "cyclic dependency: {}", cycle.join(" -> "))
             }
+            ResolveError::Git { url, message } => write!(f, "git {url}: {message}"),
         }
     }
 }
@@ -75,10 +88,34 @@ impl std::error::Error for ResolveError {}
 struct Resolved {
     path: Option<PathBuf>,
     version: String,
+    source: Option<GitSource>,
 }
 
-/// Resolves `root_dir`'s full dependency graph into a [`Lockfile`].
+/// Resolves `root_dir`'s full dependency graph into a [`Lockfile`],
+/// materializing any `git` dependency into `~/.aint/cache/git/` (or
+/// the Windows equivalent) along the way.
 pub fn resolve(root_dir: &Path) -> Result<Lockfile, ResolveError> {
+    resolve_with_git_cache(root_dir, &default_git_cache_dir())
+}
+
+fn default_git_cache_dir() -> PathBuf {
+    home_dir().join(".aint").join("cache").join("git")
+}
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Same as [`resolve`], with an explicit git cache directory - split
+/// out so tests can point it at a temporary directory instead of a
+/// real machine's home directory.
+fn resolve_with_git_cache(
+    root_dir: &Path,
+    git_cache_root: &Path,
+) -> Result<Lockfile, ResolveError> {
     let root_dir = canonicalize(root_dir)?;
     let root_manifest = read_manifest(&root_dir)?;
 
@@ -88,11 +125,18 @@ pub fn resolve(root_dir: &Path) -> Result<Lockfile, ResolveError> {
         Resolved {
             path: None,
             version: root_manifest.package.version.clone(),
+            source: None,
         },
     );
 
     let mut stack = vec![root_manifest.package.name.clone()];
-    visit(&root_dir, &root_manifest, &mut resolved, &mut stack)?;
+    visit(
+        &root_dir,
+        &root_manifest,
+        &mut resolved,
+        &mut stack,
+        git_cache_root,
+    )?;
 
     let packages = resolved
         .into_iter()
@@ -100,6 +144,7 @@ pub fn resolve(root_dir: &Path) -> Result<Lockfile, ResolveError> {
             name,
             version: entry.version,
             path: entry.path.map(|p| p.display().to_string()),
+            source: entry.source,
         })
         .collect();
     Ok(Lockfile { packages })
@@ -110,9 +155,10 @@ fn visit(
     manifest: &Manifest,
     resolved: &mut BTreeMap<String, Resolved>,
     stack: &mut Vec<String>,
+    git_cache_root: &Path,
 ) -> Result<(), ResolveError> {
     for (dep_name, dep) in &manifest.dependencies {
-        let dep_path = canonicalize(&pkg_dir.join(&dep.path))?;
+        let (dep_path, source) = materialize(dep, pkg_dir, git_cache_root)?;
         let dep_manifest = read_manifest(&dep_path)?;
 
         if &dep_manifest.package.name != dep_name {
@@ -157,13 +203,79 @@ fn visit(
             Resolved {
                 path: Some(dep_path.clone()),
                 version: dep_manifest.package.version.clone(),
+                source,
             },
         );
         stack.push(dep_name.clone());
-        visit(&dep_path, &dep_manifest, resolved, stack)?;
+        visit(&dep_path, &dep_manifest, resolved, stack, git_cache_root)?;
         stack.pop();
     }
     Ok(())
+}
+
+/// Resolves one dependency declaration to a real, local directory -
+/// `path` dependencies unchanged from milestone 23; a `git`
+/// dependency is materialized via [`materialize_git_with_cache`], then
+/// returned as if it were a path dependency all along.
+fn materialize(
+    dep: &Dependency,
+    pkg_dir: &Path,
+    git_cache_root: &Path,
+) -> Result<(PathBuf, Option<GitSource>), ResolveError> {
+    match dep {
+        Dependency::Path { path } => Ok((canonicalize(&pkg_dir.join(path))?, None)),
+        Dependency::Git { git: url, rev } => {
+            let (dir, source) = materialize_git_with_cache(url, rev.as_deref(), git_cache_root)?;
+            Ok((dir, Some(source)))
+        }
+    }
+}
+
+/// Materializes a git dependency into the default `~/.aint/cache/git`
+/// cache (or the Windows equivalent) and returns its local path plus
+/// resolved source info. Public so `aint add --git` (milestone 36) can
+/// discover a dependency's declared package name — by reading the
+/// manifest at the returned path — before inserting it into
+/// `aint.toml`, the same way the existing path-dependency flow reads a
+/// local directory's manifest to learn its name.
+pub fn materialize_git(url: &str, rev: Option<&str>) -> Result<(PathBuf, GitSource), ResolveError> {
+    materialize_git_with_cache(url, rev, &default_git_cache_dir())
+}
+
+/// Cloned (on a cache miss) or fetched-and-checked-out (on a cache
+/// hit, only when `rev` is given - see
+/// `docs/milestones/36-git-dependencies/SPEC.md` for why an unpinned,
+/// already-cached git dependency isn't re-fetched on every resolve).
+fn materialize_git_with_cache(
+    url: &str,
+    rev: Option<&str>,
+    cache_root: &Path,
+) -> Result<(PathBuf, GitSource), ResolveError> {
+    let dir = git::cache_dir_for(cache_root, url);
+    let err = |message: String| ResolveError::Git {
+        url: url.to_string(),
+        message,
+    };
+
+    if dir.exists() {
+        if rev.is_some() {
+            let _ = git::fetch(&dir);
+        }
+    } else {
+        git::clone(url, &dir).map_err(err)?;
+    }
+    if let Some(rev) = rev {
+        git::checkout(&dir, rev).map_err(err)?;
+    }
+    let commit = git::rev_parse_head(&dir).map_err(err)?;
+    let dir = canonicalize(&dir)?;
+    Ok((
+        dir,
+        GitSource {
+            git: url.to_string(),
+            commit,
+        },
+    ))
 }
 
 fn read_manifest(dir: &Path) -> Result<Manifest, ResolveError> {
@@ -180,8 +292,8 @@ fn canonicalize(path: &Path) -> Result<PathBuf, ResolveError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::Dependency;
     use std::fs;
+    use std::process::Command;
 
     /// A scratch directory tree for one test, cleaned up on drop -
     /// `resolve` genuinely reads from disk (it has to: dependency
@@ -220,7 +332,7 @@ mod tests {
     }
 
     fn dep(path: &str) -> Dependency {
-        Dependency {
+        Dependency::Path {
             path: path.to_string(),
         }
     }
@@ -354,5 +466,158 @@ mod tests {
 
         let err = resolve(&root_dir).expect_err("should fail to resolve");
         assert!(matches!(err, ResolveError::Io { .. }));
+    }
+
+    /// Sets up a real, local, offline git repository at `dir` - a
+    /// `git init` package directory, an `aint.toml` matching
+    /// `package_name`, one commit, and (if `tag` is given) a tag on
+    /// that commit. Real `git`, real commits, real tags - no network,
+    /// no mock, the same "genuinely reads the filesystem" reasoning
+    /// `TempWorkspace` itself already follows, extended to git.
+    fn init_git_package(dir: &Path, package_name: &str, tag: Option<&str>) -> String {
+        fs::create_dir_all(dir).expect("should create git package dir");
+        Manifest::new(package_name, "0.1.0")
+            .write_to_dir(dir)
+            .expect("should write manifest");
+
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
+                .status()
+                .expect("failed to run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+
+        git(&["init", "--quiet"]);
+        git(&["add", "."]);
+        git(&["commit", "--quiet", "-m", "initial"]);
+        if let Some(tag) = tag {
+            git(&["tag", tag]);
+        }
+
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("failed to run git rev-parse");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn resolves_a_git_dependency_from_a_local_repository() {
+        let ws = TempWorkspace::new("git_basic");
+        let remote_dir = ws.path("remote");
+        let commit = init_git_package(&remote_dir, "git-lib", None);
+
+        let mut root = Manifest::new("root", "0.1.0");
+        root.dependencies.insert(
+            "git-lib".to_string(),
+            Dependency::Git {
+                git: remote_dir.display().to_string(),
+                rev: None,
+            },
+        );
+        let root_dir = ws.write_package("root", &root);
+        let cache_dir = ws.path("cache");
+
+        let lockfile =
+            resolve_with_git_cache(&root_dir, &cache_dir).expect("should resolve a git dep");
+        let locked = lockfile
+            .packages
+            .iter()
+            .find(|p| p.name == "git-lib")
+            .expect("git-lib should be locked");
+        assert!(locked.path.is_some());
+        let source = locked.source.as_ref().expect("should record a GitSource");
+        assert_eq!(source.git, remote_dir.display().to_string());
+        assert_eq!(source.commit, commit);
+    }
+
+    #[test]
+    fn resolves_a_git_dependency_pinned_to_a_tag() {
+        let ws = TempWorkspace::new("git_tag");
+        let remote_dir = ws.path("remote");
+        let commit = init_git_package(&remote_dir, "git-lib", Some("v1.0.0"));
+
+        let mut root = Manifest::new("root", "0.1.0");
+        root.dependencies.insert(
+            "git-lib".to_string(),
+            Dependency::Git {
+                git: remote_dir.display().to_string(),
+                rev: Some("v1.0.0".to_string()),
+            },
+        );
+        let root_dir = ws.write_package("root", &root);
+        let cache_dir = ws.path("cache");
+
+        let lockfile =
+            resolve_with_git_cache(&root_dir, &cache_dir).expect("should resolve a pinned git dep");
+        let locked = lockfile
+            .packages
+            .iter()
+            .find(|p| p.name == "git-lib")
+            .expect("git-lib should be locked");
+        assert_eq!(locked.source.as_ref().unwrap().commit, commit);
+    }
+
+    #[test]
+    fn a_second_resolve_reuses_the_cached_clone() {
+        let ws = TempWorkspace::new("git_cache_reuse");
+        let remote_dir = ws.path("remote");
+        init_git_package(&remote_dir, "git-lib", None);
+
+        let mut root = Manifest::new("root", "0.1.0");
+        root.dependencies.insert(
+            "git-lib".to_string(),
+            Dependency::Git {
+                git: remote_dir.display().to_string(),
+                rev: None,
+            },
+        );
+        let root_dir = ws.write_package("root", &root);
+        let cache_dir = ws.path("cache");
+
+        let first = resolve_with_git_cache(&root_dir, &cache_dir).expect("first resolve");
+        let second = resolve_with_git_cache(&root_dir, &cache_dir).expect("second resolve");
+        assert_eq!(
+            first
+                .packages
+                .iter()
+                .find(|p| p.name == "git-lib")
+                .unwrap()
+                .path,
+            second
+                .packages
+                .iter()
+                .find(|p| p.name == "git-lib")
+                .unwrap()
+                .path,
+        );
+    }
+
+    #[test]
+    fn a_nonexistent_git_remote_is_a_clear_git_error() {
+        let ws = TempWorkspace::new("git_missing_remote");
+        let mut root = Manifest::new("root", "0.1.0");
+        root.dependencies.insert(
+            "nope".to_string(),
+            Dependency::Git {
+                git: ws.path("does-not-exist").display().to_string(),
+                rev: None,
+            },
+        );
+        let root_dir = ws.write_package("root", &root);
+        let cache_dir = ws.path("cache");
+
+        let err = resolve_with_git_cache(&root_dir, &cache_dir)
+            .expect_err("should fail to clone a nonexistent remote");
+        assert!(matches!(err, ResolveError::Git { .. }));
     }
 }
