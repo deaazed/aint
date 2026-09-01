@@ -250,6 +250,20 @@ Type { body }` now runs for real, whether called directly or requested
 by a model, with an explicit `mock` always taking precedence. See
 `docs/milestones/34-real-tools/SPEC.md`.
 
+## 35 — Installer — done
+
+Getting `aint` has meant `cargo build` since the project existed. A
+release workflow now builds real binaries on a tagged push, and
+`install.sh`/`install.ps1` fetch them — no cargo, no new hosting,
+everything served by GitHub. See
+`docs/milestones/35-installer/SPEC.md`.
+
+## 36 — Package dependencies over git
+
+In progress. `aint add`'s local-path-only limitation, resolved the
+same way Go modules do it: a dependency can name a git URL, no hosted
+registry required. See `docs/milestones/36-git-dependencies/SPEC.md`.
+
 ---
 
 ## Known hard problems, by category

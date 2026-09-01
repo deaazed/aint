@@ -102,8 +102,28 @@ highlighting — each named directly, with the reason, in
 `docs/SPECIFICATION.md`'s "known gaps" and `docs/ARCHITECTURE.md`'s
 "what's still deliberately not built."
 
-## Building
+## Install
 
+No Rust toolchain needed — prebuilt binaries, fetched by a small
+script (Linux and macOS):
+
+```
+curl -fsSL https://raw.githubusercontent.com/deaazed/aint/main/install.sh | sh
+```
+
+Windows:
+
+```
+irm https://raw.githubusercontent.com/deaazed/aint/main/install.ps1 | iex
+```
+
+Both install to `~/.aint/bin` (`%USERPROFILE%\.aint\bin` on Windows)
+and tell you if that isn't already on `PATH`. Verify with
+`aint --version`.
+
+## Building from source
+
+For contributing, or a platform the installer doesn't cover yet.
 Requires a recent stable Rust toolchain.
 
 ```
