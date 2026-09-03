@@ -52,7 +52,7 @@ fn docs_index_route(method: String, path: String, body: String) -> String {
 fn install_route(method: String, path: String, body: String) -> String {
     return layout_doc_page(
         "Install — AINT docs",
-        "Build the AINT toolchain from source. Requires a recent stable Rust toolchain, nothing else.",
+        "One-line installer for macOS, Linux, and Windows — prebuilt binaries, no Cargo required. Building from source is still fully supported.",
         "install",
         install_content(layout_shell_block)
     )
