@@ -289,6 +289,34 @@ fn logical_operators_an_test_block_passes() {
     assert!(stdout.contains("1 run, 1 passed, 0 failed"));
 }
 
+/// `examples/string_replace.an` uses `string_replace` (milestone 39).
+/// A plain native function call, no short-circuiting or VM-specific
+/// concerns at all, so it runs identically under the VM.
+#[test]
+fn string_replace_an_runs_identically_under_the_vm() {
+    let expected = concat!(
+        "&lt;script&gt;alert(1)&lt;/script&gt;\n",
+        "Ben &amp; Jerry's &quot;famous&quot; ice cream\n",
+        "bbbbbb\n",
+        "no match here\n"
+    );
+    let output = run_aint(&example_path("string_replace.an"));
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+
+    let vm_output = run_aint_vm(&example_path("string_replace.an"));
+    assert!(vm_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&vm_output.stdout), expected);
+}
+
+#[test]
+fn string_replace_an_test_block_passes() {
+    let output = test_aint(&example_path("string_replace.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 run, 1 passed, 0 failed"));
+}
+
 #[test]
 fn async_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("async.an"));

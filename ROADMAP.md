@@ -314,15 +314,15 @@ there explicitly (short-circuiting would need real conditional-jump
 bytecode), the same shape as closures and if-expressions. See
 `docs/milestones/38-comparison-and-logical-operators/SPEC.md`.
 
-## 39 — String stdlib: replace
+## 39 — String stdlib: replace — done
 
 `string_replace(s, target, replacement) -> String`, native rather than
 something every program hand-rolls from `string_split` plus a
 recursive join — needed for `aint-website`'s `escape_html`, the one
-place that site puts real user input back into HTML. Also the natural
-place to add whatever else this milestone's own `SPEC.md` finds missing
-once it's written against real call sites (`string_starts_with`/
-`string_ends_with` are candidates, not commitments).
+place that site puts real user input back into HTML. No VM parity gap
+— a plain native call, resolved through the same shared table the
+tree-walker and bytecode VM already both use. See
+`docs/milestones/39-string-replace/SPEC.md`.
 
 ## 40 — URL/query percent-decoding
 

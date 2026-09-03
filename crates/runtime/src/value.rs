@@ -220,6 +220,14 @@ pub enum NativeFunction {
     /// doesn't occur yields a one-element list (the whole string), same
     /// as `str::split` in the standard libraries this mirrors.
     StringSplit,
+    /// Replaces every occurrence of `target` with `replacement`
+    /// (milestone 39) — the one stdlib gap `aint-website`'s own
+    /// HTML-escaping helper found: nothing native to build `replace`
+    /// from except `string_split` plus a hand-rolled recursive join.
+    /// An empty `target` (like `str::split`'s own already-established
+    /// handling of an empty separator) leaves the string unchanged
+    /// rather than inserting `replacement` between every character.
+    StringReplace,
     TimeNowSeconds,
     /// The one genuinely asynchronous native function (milestone 07),
     /// chosen as the simplest possible thing that actually suspends —
@@ -343,6 +351,7 @@ impl NativeFunction {
             NativeFunction::StringContains => "string_contains",
             NativeFunction::StringConcat => "string_concat",
             NativeFunction::StringSplit => "string_split",
+            NativeFunction::StringReplace => "string_replace",
             NativeFunction::TimeNowSeconds => "time_now_seconds",
             NativeFunction::TimeSleepMs => "time_sleep_ms",
             NativeFunction::CollectionsLength => "collections_length",

@@ -1984,6 +1984,45 @@ mod tests {
     }
 
     #[test]
+    fn string_replace_replaces_every_occurrence() {
+        assert_eq!(
+            run_capturing("import string\nprint(string_replace(\"a-b-c\", \"-\", \"_\"))"),
+            "a_b_c\n"
+        );
+    }
+
+    #[test]
+    fn string_replace_on_an_absent_target_leaves_the_string_unchanged() {
+        assert_eq!(
+            run_capturing("import string\nprint(string_replace(\"hello\", \"z\", \"_\"))"),
+            "hello\n"
+        );
+    }
+
+    #[test]
+    fn string_replace_on_an_empty_target_leaves_the_string_unchanged() {
+        // Not Rust's own `str::replace("", ...)`, which would insert
+        // between every character - matches `string_split`'s already-
+        // established handling of an empty separator instead.
+        assert_eq!(
+            run_capturing("import string\nprint(string_replace(\"hello\", \"\", \"_\"))"),
+            "hello\n"
+        );
+    }
+
+    #[test]
+    fn string_replace_can_shrink_or_grow_the_string() {
+        assert_eq!(
+            run_capturing("import string\nprint(string_replace(\"aaa\", \"a\", \"\"))"),
+            "\n"
+        );
+        assert_eq!(
+            run_capturing("import string\nprint(string_replace(\"a\", \"a\", \"bcd\"))"),
+            "bcd\n"
+        );
+    }
+
+    #[test]
     fn time_now_seconds_returns_a_plausible_timestamp() {
         assert_eq!(
             run_capturing("import time\nprint(time_now_seconds() > 1700000000)"),

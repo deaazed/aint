@@ -1,0 +1,28 @@
+// string_replace(s, target, replacement) -> String (milestone 39) -
+// the one stdlib gap building aint-website found: escaping HTML for
+// its one page that echoes real user input needed a hand-rolled
+// replace_all built from string_split plus a recursive join. Native
+// now: one call instead of two custom helper functions.
+import string
+
+fn escape_html(s: String) -> String {
+    let step1 = string_replace(s, "&", "&amp;")
+    let step2 = string_replace(step1, "<", "&lt;")
+    let step3 = string_replace(step2, ">", "&gt;")
+    return string_replace(step3, "\"", "&quot;")
+}
+
+fn main() -> Unit {
+    print(escape_html("<script>alert(1)</script>"))
+    print(escape_html("Ben & Jerry's \"famous\" ice cream"))
+    print(string_replace("aaa", "a", "bb"))
+    print(string_replace("no match here", "xyz", "_"))
+}
+
+main()
+
+test "escape_html neutralizes every HTML-significant character" {
+    assert escape_html("<script>alert(1)</script>") == "&lt;script&gt;alert(1)&lt;/script&gt;"
+    assert escape_html("a & b") == "a &amp; b"
+    assert string_replace("aaa", "a", "") == ""
+}

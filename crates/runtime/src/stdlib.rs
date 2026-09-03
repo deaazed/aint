@@ -49,6 +49,7 @@ pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction
             ("string_contains", NativeFunction::StringContains),
             ("string_concat", NativeFunction::StringConcat),
             ("string_split", NativeFunction::StringSplit),
+            ("string_replace", NativeFunction::StringReplace),
         ]),
         "time" => Some(vec![
             ("time_now_seconds", NativeFunction::TimeNowSeconds),
@@ -185,6 +186,22 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
                     .collect()
             };
             Ok(Value::List(parts))
+        }
+        NativeFunction::StringReplace => {
+            let [s, target, replacement] = three(native, args, span)?;
+            let s = string(&s, span)?;
+            let target = string(&target, span)?;
+            let replacement = string(&replacement, span)?;
+            // An empty target leaves the string unchanged, matching
+            // `string_split`'s own established handling of an empty
+            // separator - not Rust's `str::replace`, which would
+            // insert `replacement` between every character.
+            let result = if target.is_empty() {
+                s.to_string()
+            } else {
+                s.replace(target, replacement)
+            };
+            Ok(Value::String(result))
         }
         NativeFunction::TimeNowSeconds => {
             let [] = zero(native, args, span)?;

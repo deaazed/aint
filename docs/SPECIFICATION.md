@@ -420,7 +420,7 @@ ungated.
 | Module | Functions |
 |---|---|
 | `math` | `math_sqrt`, `math_pow`, `math_floor`, `math_ceil`, `math_round`, `math_abs`, `math_min`, `math_max` |
-| `string` | `string_length`, `string_to_upper`, `string_to_lower`, `string_trim`, `string_contains`, `string_concat`, `string_split(s, sep) -> List<String>` (milestone 31) |
+| `string` | `string_length`, `string_to_upper`, `string_to_lower`, `string_trim`, `string_contains`, `string_concat`, `string_split(s, sep) -> List<String>` (milestone 31), `string_replace(s, target, replacement) -> String` (milestone 39 — every occurrence; an empty `target` leaves `s` unchanged) |
 | `time` | `time_now_seconds`, `time_sleep_ms` (async — the one async native before milestone 25) |
 | `collections` | `collections_length` (polymorphic over `List<T>`) |
 | `distribution` | `distribution_probability`, `distribution_argmax`, `distribution_entropy`, `distribution_sample`, `distribution_require_confidence` |
@@ -516,12 +516,6 @@ it was found):
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.
   (`docs/milestones/25-real-application/SPEC.md`)
-- **No `string_replace`** — or any stdlib string operation beyond
-  `string_split`/`string_concat`/`string_length`/`string_trim`/
-  `string_contains`/`string_to_upper`/`string_to_lower`. Escaping HTML
-  for `aint-website`'s one page that echoes real user input needed a
-  hand-rolled `replace_all` built from `string_split` plus a recursive
-  join. (§9, `ROADMAP.md`'s Phase 3 framing, milestone 39, not started)
 - **Query-string values aren't percent-decoded**, and the stdlib has no
   hex/char-code primitive an AINT program could use to decode them
   itself — `router_query_param` returns `%20`/`%3C`/etc. exactly as
