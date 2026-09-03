@@ -53,7 +53,7 @@ fn find_param(pairs: List<String>, index: Int, key: String) -> String {
         let kv = string_split(pairs[index], "=")
         if collections_length(kv) == 2 {
             if kv[0] == key {
-                return kv[1]
+                return decode_query_value(kv[1])
             } else {
                 return find_param(pairs, index + 1, key)
             }
@@ -63,4 +63,13 @@ fn find_param(pairs: List<String>, index: Int, key: String) -> String {
     } else {
         return ""
     }
+}
+
+// A query value arrives exactly as it was on the wire - `+` for a
+// space (the `application/x-www-form-urlencoded` convention query
+// strings use, distinct from strict percent-decoding, which leaves a
+// literal `+` alone - see `string_url_decode`'s own doc comment), then
+// `%XX` escapes for everything else (milestone 40).
+fn decode_query_value(raw: String) -> String {
+    return string_url_decode(string_replace(raw, "+", " "))
 }

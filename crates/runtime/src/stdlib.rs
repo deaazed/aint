@@ -50,6 +50,7 @@ pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction
             ("string_concat", NativeFunction::StringConcat),
             ("string_split", NativeFunction::StringSplit),
             ("string_replace", NativeFunction::StringReplace),
+            ("string_url_decode", NativeFunction::StringUrlDecode),
         ]),
         "time" => Some(vec![
             ("time_now_seconds", NativeFunction::TimeNowSeconds),
@@ -202,6 +203,10 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
                 s.replace(target, replacement)
             };
             Ok(Value::String(result))
+        }
+        NativeFunction::StringUrlDecode => {
+            let [s] = one(native, args, span)?;
+            Ok(Value::String(url_decode(string(&s, span)?)))
         }
         NativeFunction::TimeNowSeconds => {
             let [] = zero(native, args, span)?;
@@ -566,5 +571,38 @@ fn string(value: &Value, span: Span) -> Result<&str, RuntimeError> {
             message: format!("expected String, found {}", other.type_name()),
             span,
         }),
+    }
+}
+
+/// Strict RFC 3986 percent-decoding for `NativeFunction::StringUrlDecode`
+/// — `+` is left alone; see that variant's doc comment for why. A `%`
+/// not followed by two valid hex digits is copied through literally
+/// (not an error); a decoded byte sequence that isn't valid UTF-8 is
+/// replaced lossily rather than rejected, for the same "this came off
+/// the wire" reasoning.
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2])) {
+                out.push(high * 16 + low);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }

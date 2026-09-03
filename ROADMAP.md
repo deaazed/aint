@@ -324,16 +324,17 @@ place that site puts real user input back into HTML. No VM parity gap
 tree-walker and bytecode VM already both use. See
 `docs/milestones/39-string-replace/SPEC.md`.
 
-## 40 — URL/query percent-decoding
+## 40 — URL/query percent-decoding — done
 
-`router_query_param` (and `http` generally) returns a query value
-exactly as it arrived on the wire — `%20`/`%3C`/etc. never get decoded,
-and the stdlib has no hex or char-code primitives an AINT program could
-use to write a decoder itself. Found testing `aint-website`'s `/try`
-page: a message typed with an apostrophe or a space came back through
-as literal percent-escapes. Scope this milestone's `SPEC.md` to decide
-whether the fix is a native `string_url_decode`, decoding inside
-`router_query_param` itself, or both.
+`router_query_param` (and `http` generally) returned a query value
+exactly as it arrived on the wire — `%20`/`%3C`/etc. never decoded.
+Found testing `aint-website`'s `/try` page: a message typed with an
+apostrophe or a space came back through as literal percent-escapes.
+Both: a native `string_url_decode` (strict RFC 3986, `+` left alone),
+and `examples/router/router.an`'s `find_param` composing it with
+`string_replace` to actually decode the value it returns. No VM parity
+gap — a plain native call. See
+`docs/milestones/40-url-decoding/SPEC.md`.
 
 ## 41 — `aint run`/`aint test` load `.env` automatically
 

@@ -2023,6 +2023,41 @@ mod tests {
     }
 
     #[test]
+    fn string_url_decode_decodes_percent_escapes() {
+        assert_eq!(
+            run_capturing("import string\nprint(string_url_decode(\"a%20b\"))"),
+            "a b\n"
+        );
+        assert_eq!(
+            run_capturing("import string\nprint(string_url_decode(\"Caf%C3%A9\"))"),
+            "Café\n"
+        );
+    }
+
+    #[test]
+    fn string_url_decode_leaves_a_literal_plus_alone() {
+        // Strict RFC 3986 decoding, not the `+`-means-space convention
+        // form/query encoding layers on top - see
+        // `NativeFunction::StringUrlDecode`'s doc comment.
+        assert_eq!(
+            run_capturing("import string\nprint(string_url_decode(\"a+b\"))"),
+            "a+b\n"
+        );
+    }
+
+    #[test]
+    fn string_url_decode_handles_a_trailing_or_malformed_percent_leniently() {
+        assert_eq!(
+            run_capturing("import string\nprint(string_url_decode(\"100%\"))"),
+            "100%\n"
+        );
+        assert_eq!(
+            run_capturing("import string\nprint(string_url_decode(\"100%zz\"))"),
+            "100%zz\n"
+        );
+    }
+
+    #[test]
     fn time_now_seconds_returns_a_plausible_timestamp() {
         assert_eq!(
             run_capturing("import time\nprint(time_now_seconds() > 1700000000)"),

@@ -420,7 +420,7 @@ ungated.
 | Module | Functions |
 |---|---|
 | `math` | `math_sqrt`, `math_pow`, `math_floor`, `math_ceil`, `math_round`, `math_abs`, `math_min`, `math_max` |
-| `string` | `string_length`, `string_to_upper`, `string_to_lower`, `string_trim`, `string_contains`, `string_concat`, `string_split(s, sep) -> List<String>` (milestone 31), `string_replace(s, target, replacement) -> String` (milestone 39 — every occurrence; an empty `target` leaves `s` unchanged) |
+| `string` | `string_length`, `string_to_upper`, `string_to_lower`, `string_trim`, `string_contains`, `string_concat`, `string_split(s, sep) -> List<String>` (milestone 31), `string_replace(s, target, replacement) -> String` (milestone 39 — every occurrence; an empty `target` leaves `s` unchanged), `string_url_decode(s) -> String` (milestone 40 — strict RFC 3986 percent-decoding; `+` is left alone, compose `string_replace(s, "+", " ")` first for query-string decoding) |
 | `time` | `time_now_seconds`, `time_sleep_ms` (async — the one async native before milestone 25) |
 | `collections` | `collections_length` (polymorphic over `List<T>`) |
 | `distribution` | `distribution_probability`, `distribution_argmax`, `distribution_entropy`, `distribution_sample`, `distribution_require_confidence` |
@@ -516,11 +516,6 @@ it was found):
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.
   (`docs/milestones/25-real-application/SPEC.md`)
-- **Query-string values aren't percent-decoded**, and the stdlib has no
-  hex/char-code primitive an AINT program could use to decode them
-  itself — `router_query_param` returns `%20`/`%3C`/etc. exactly as
-  they arrived on the wire. (`ROADMAP.md`'s Phase 3 framing, milestone
-  40, not started)
 - **`aint run`/`aint test` never read a `.env` file** — every real
   model call needs `AINT_MODEL_URL`/`AINT_MODEL_NAME`/
   `AINT_MODEL_API_KEY` exported by hand first. (`ROADMAP.md`'s Phase 3

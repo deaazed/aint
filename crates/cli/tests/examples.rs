@@ -317,6 +317,29 @@ fn string_replace_an_test_block_passes() {
     assert!(stdout.contains("1 run, 1 passed, 0 failed"));
 }
 
+/// `examples/url_decode.an` uses `string_url_decode` (milestone 40).
+/// A plain native function call, no short-circuiting or VM-specific
+/// concerns at all, so it runs identically under the VM.
+#[test]
+fn url_decode_an_runs_identically_under_the_vm() {
+    let expected = "Café\n100%\na+b\nAda Lovelace\na+b=c\n";
+    let output = run_aint(&example_path("url_decode.an"));
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+
+    let vm_output = run_aint_vm(&example_path("url_decode.an"));
+    assert!(vm_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&vm_output.stdout), expected);
+}
+
+#[test]
+fn url_decode_an_test_block_passes() {
+    let output = test_aint(&example_path("url_decode.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 run, 1 passed, 0 failed"));
+}
+
 #[test]
 fn async_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("async.an"));

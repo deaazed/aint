@@ -1525,6 +1525,12 @@ mod tests {
     }
 
     #[test]
+    fn string_url_decode_returns_a_string() {
+        check("import string\nlet s = string_url_decode(\"a%20b\")\nprint(s)")
+            .expect("should type-check");
+    }
+
+    #[test]
     fn stdlib_function_still_checks_argument_types() {
         let err = check("import math\nmath_sqrt(\"x\")").unwrap_err();
         assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));

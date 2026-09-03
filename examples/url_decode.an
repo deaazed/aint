@@ -1,0 +1,27 @@
+// string_url_decode(s) -> String (milestone 40) - strict RFC 3986
+// percent-decoding; `+` is left alone (that's the query-string-
+// specific application/x-www-form-urlencoded convention, composed
+// separately with string_replace, exactly the way
+// examples/router/router.an's own query_param now decodes a value).
+import string
+
+fn decode_query_value(raw: String) -> String {
+    return string_url_decode(string_replace(raw, "+", " "))
+}
+
+fn main() -> Unit {
+    print(string_url_decode("Caf%C3%A9"))
+    print(string_url_decode("100%"))
+    print(string_url_decode("a+b"))
+    print(decode_query_value("Ada+Lovelace"))
+    print(decode_query_value("a%2Bb%3Dc"))
+}
+
+main()
+
+test "string_url_decode and decode_query_value behave as documented" {
+    assert string_url_decode("a%20b") == "a b"
+    assert string_url_decode("a+b") == "a+b"
+    assert decode_query_value("a+b") == "a b"
+    assert decode_query_value("a%2Bb") == "a+b"
+}

@@ -228,6 +228,18 @@ pub enum NativeFunction {
     /// handling of an empty separator) leaves the string unchanged
     /// rather than inserting `replacement` between every character.
     StringReplace,
+    /// Percent-decodes `%XX` escape sequences (milestone 40) — strict
+    /// RFC 3986 decoding only, deliberately *not* also mapping `+` to
+    /// a space the way `application/x-www-form-urlencoded` query
+    /// strings conventionally do; a caller decoding a query value
+    /// composes that itself with `string_replace(s, "+", " ")` first,
+    /// keeping this native correct for a URL path segment too, not
+    /// just a query string. A `%` not followed by two hex digits, or a
+    /// decoded byte sequence that isn't valid UTF-8, is handled
+    /// leniently (left as-is / lossily replaced) rather than erroring
+    /// — the input is coming off the wire, not out of a program the
+    /// type checker already vetted.
+    StringUrlDecode,
     TimeNowSeconds,
     /// The one genuinely asynchronous native function (milestone 07),
     /// chosen as the simplest possible thing that actually suspends —
@@ -352,6 +364,7 @@ impl NativeFunction {
             NativeFunction::StringConcat => "string_concat",
             NativeFunction::StringSplit => "string_split",
             NativeFunction::StringReplace => "string_replace",
+            NativeFunction::StringUrlDecode => "string_url_decode",
             NativeFunction::TimeNowSeconds => "time_now_seconds",
             NativeFunction::TimeSleepMs => "time_sleep_ms",
             NativeFunction::CollectionsLength => "collections_length",

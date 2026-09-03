@@ -48,3 +48,9 @@ test "query_param on a missing key or no query string is empty" {
     assert router_query_param("/greet?name=Ada", "nope") == ""
     assert router_query_param("/greet", "name") == ""
 }
+
+test "query_param decodes + and %XX escapes (milestone 40)" {
+    assert router_query_param("/greet?name=Ada+Lovelace", "name") == "Ada Lovelace"
+    assert router_query_param("/greet?name=Caf%C3%A9", "name") == "Café"
+    assert router_query_param("/search?q=a%2Bb%3Dc", "q") == "a+b=c"
+}
