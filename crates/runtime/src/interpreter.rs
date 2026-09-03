@@ -673,6 +673,11 @@ impl<W: Write, M: Model> Interpreter<W, M> {
         loop {
             self.check_model_call_budget(&pending.function, span)?;
 
+            let return_type_variants = match &pending.return_type {
+                Type::Enum(name) => self.known_variants(name, span).ok(),
+                _ => None,
+            };
+
             let start = Instant::now();
             let result = self
                 .model
@@ -680,6 +685,7 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     function: pending.function.clone(),
                     args: pending.args.clone(),
                     return_type: pending.return_type.clone(),
+                    return_type_variants,
                     available_tools: self.available_tools_for(&pending.permissions),
                     history: history.clone(),
                     span,

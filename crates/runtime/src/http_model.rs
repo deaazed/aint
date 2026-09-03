@@ -156,19 +156,29 @@ fn build_prompt(request: &InferenceRequest) -> String {
     format!(
         "You are implementing the function `{}`. Given {args_description}, {}",
         request.function,
-        expected_shape(&request.return_type),
+        expected_shape(
+            &request.return_type,
+            request.return_type_variants.as_deref()
+        ),
     )
 }
 
-fn expected_shape(ty: &Type) -> String {
+fn expected_shape(ty: &Type, variants: Option<&[String]>) -> String {
     match ty {
         Type::Bool => "respond with exactly `true` or `false` and nothing else.".to_string(),
         Type::Int => "respond with a single integer and nothing else.".to_string(),
         Type::Float => "respond with a single number and nothing else.".to_string(),
         Type::String => "respond with the answer as plain text and nothing else.".to_string(),
-        Type::Enum(name) => {
-            format!("respond with exactly one variant name of the `{name}` enum and nothing else.")
-        }
+        Type::Enum(name) => match variants {
+            Some(names) if !names.is_empty() => format!(
+                "respond with exactly one of these {} variant names and nothing else: {}.",
+                name,
+                names.join(", ")
+            ),
+            _ => format!(
+                "respond with exactly one variant name of the `{name}` enum and nothing else."
+            ),
+        },
         other => format!("respond with a value of type {other} and nothing else."),
     }
 }
@@ -232,6 +242,7 @@ mod tests {
             function: "classify".to_string(),
             args: vec![Value::String("great product".to_string())],
             return_type,
+            return_type_variants: None,
             available_tools: vec![],
             history: vec![],
             span: span(),
@@ -290,6 +301,22 @@ mod tests {
             outcome,
             InferenceOutcome::Answer(Value::Enum("Sentiment".to_string(), "Positive".to_string()))
         );
+    }
+
+    #[test]
+    fn the_prompt_lists_real_variant_names_when_theyre_known() {
+        let mut req = request(Type::Enum("Sentiment".to_string()));
+        req.return_type_variants = Some(vec!["Positive".to_string(), "Negative".to_string()]);
+        let prompt = build_prompt(&req);
+        assert!(prompt.contains("Positive"));
+        assert!(prompt.contains("Negative"));
+    }
+
+    #[test]
+    fn the_prompt_falls_back_to_a_generic_shape_when_variants_are_unknown() {
+        let req = request(Type::Enum("Sentiment".to_string()));
+        let prompt = build_prompt(&req);
+        assert!(prompt.contains("variant name of the `Sentiment` enum"));
     }
 
     #[tokio::test]

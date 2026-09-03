@@ -28,10 +28,23 @@ use crate::value::Value;
 /// the model is allowed to call, and what's already happened in this
 /// tool-calling conversation so far. `MockModel` ignores both, same as
 /// it ignores `return_type` — the shape exists for a real adapter.
+///
+/// `return_type_variants` is the declared enum's actual variant names
+/// when `return_type` is `Type::Enum(name)` (`None` for every other
+/// type). Found live, dogfooding `aint-website`'s classify demo
+/// against a real model: `HttpModel` used to prompt with only the
+/// enum's *name* ("respond with a variant of `Intent`") and never say
+/// what the variants actually were, so a real model had nothing to
+/// match against and free-associated something plausible-sounding
+/// instead — a schema violation on every call, invisible until now
+/// since every prior test used `MockModel`, which never needed this
+/// field. `Interpreter` populates it from the same `known_variants`
+/// lookup schema validation already uses.
 pub struct InferenceRequest {
     pub function: String,
     pub args: Vec<Value>,
     pub return_type: Type,
+    pub return_type_variants: Option<Vec<String>>,
     pub available_tools: Vec<ToolSignature>,
     pub history: Vec<ToolExchange>,
     pub span: Span,
@@ -138,6 +151,7 @@ mod tests {
             function: function.to_string(),
             args: vec![Value::String("great".to_string())],
             return_type: Type::Bool,
+            return_type_variants: None,
             available_tools: vec![],
             history: vec![],
             span: span(),
