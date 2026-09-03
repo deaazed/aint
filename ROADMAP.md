@@ -269,6 +269,76 @@ the entire time — a resolved dependency was never actually
 through `aint.lock` to that package's `lib.an`. See
 `docs/milestones/36-git-dependencies/SPEC.md`.
 
+## Phase 3 — ergonomics, from dogfooding
+
+Phase 2 (29–36) made AINT capable of real, multi-file, dependency-
+having programs. Building a full website on top of that — first inside
+this repo as `examples/website/`, then again for real as its own
+standalone `aint-website` project — didn't find a capability gap. It
+found that every page was still hand-nested `string_concat` chains,
+because there is no way to compute one of two values and return it
+once. Phase 3 fixes what that dogfooding actually cost, in the order it
+actually cost time, not by guessing. (One real bug came out of the same
+effort too — `HttpModel` never told a model what an enum's variants
+actually were, so live structured-output classification failed outright
+against Mistral. That was a correctness bug, not an ergonomics gap, and
+is already fixed — see the `[F]` commit bumping to 0.1.1, not a Phase 3
+milestone.)
+
+## 37 — Conditional expressions
+
+`if`/`else` becomes usable as an expression, not just a statement:
+`let x = if cond { a } else { b }`, both branches required and
+type-matched when used this way — statement-position `if` (`else`
+still optional) is unchanged. `else if` comes along as sugar for
+`else { if ... }`, since it's nearly free once the grammar supports
+this. The single highest-leverage fix `aint-website` found: a
+four-variant label function needed three levels of nested `if`/`else`,
+and a two-branch page handler had to duplicate its entire page-wrapping
+call in both branches rather than compute a value once.
+
+## 38 — Missing comparison and logical operators
+
+`<=`, `>=`, `!`, `&&`, `||` — reached for by reflex, absent since day
+one. `&&`/`||` short-circuit, matching every other language that has
+them; worth stating explicitly in `SPEC.md`, since evaluation order
+starts to matter once a `tool`/`infer` call can appear in an operand.
+Directly hit writing `aint-website`'s own HTML-escaping helper: a
+boundary check that should have been `index >= length - 1` had to be
+inverted, and its branches swapped, to work with only `<`.
+
+## 39 — String stdlib: replace
+
+`string_replace(s, target, replacement) -> String`, native rather than
+something every program hand-rolls from `string_split` plus a
+recursive join — needed for `aint-website`'s `escape_html`, the one
+place that site puts real user input back into HTML. Also the natural
+place to add whatever else this milestone's own `SPEC.md` finds missing
+once it's written against real call sites (`string_starts_with`/
+`string_ends_with` are candidates, not commitments).
+
+## 40 — URL/query percent-decoding
+
+`router_query_param` (and `http` generally) returns a query value
+exactly as it arrived on the wire — `%20`/`%3C`/etc. never get decoded,
+and the stdlib has no hex or char-code primitives an AINT program could
+use to write a decoder itself. Found testing `aint-website`'s `/try`
+page: a message typed with an apostrophe or a space came back through
+as literal percent-escapes. Scope this milestone's `SPEC.md` to decide
+whether the fix is a native `string_url_decode`, decoding inside
+`router_query_param` itself, or both.
+
+## 41 — `aint run`/`aint test` load `.env` automatically
+
+`aint` has never read a `.env` file — every real model call needs the
+caller to export `AINT_MODEL_URL`/`AINT_MODEL_NAME`/`AINT_MODEL_API_KEY`
+by hand first, which is why `aint-website` needed its own `run.ps1`
+just to start the site with real credentials. Smaller than 37–40, and
+arguably CLI ergonomics more than language design, but it's exactly the
+kind of first-run friction that decides whether someone gets a live
+demo working at all — worth doing while this phase is already looking
+at what dogfooding actually cost.
+
 ---
 
 ## Known hard problems, by category

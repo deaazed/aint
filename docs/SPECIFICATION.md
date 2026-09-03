@@ -467,3 +467,29 @@ it was found):
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.
   (`docs/milestones/25-real-application/SPEC.md`)
+- **`if`/`else` is a statement, not an expression** — no `let x = if
+  cond { a } else { b }`, and no `else if` sugar (an `else if` chain is
+  written as nested `if`s inside `else`). Found costly building a real
+  website on top of AINT: computing one of several values still means
+  duplicating the surrounding code in every branch instead of returning
+  a value once. (`ROADMAP.md`'s Phase 3 framing, milestone 37, not
+  started)
+- **No `<=`, `>=`, `!`, `&&`, or `||`.** Present since day one; every
+  boundary check or compound condition needs restating in terms of `<`,
+  `>`, and `==`. (`ROADMAP.md`'s Phase 3 framing, milestone 38, not
+  started)
+- **No `string_replace`** — or any stdlib string operation beyond
+  `string_split`/`string_concat`/`string_length`/`string_trim`/
+  `string_contains`/`string_to_upper`/`string_to_lower`. Escaping HTML
+  for `aint-website`'s one page that echoes real user input needed a
+  hand-rolled `replace_all` built from `string_split` plus a recursive
+  join. (§9, `ROADMAP.md`'s Phase 3 framing, milestone 39, not started)
+- **Query-string values aren't percent-decoded**, and the stdlib has no
+  hex/char-code primitive an AINT program could use to decode them
+  itself — `router_query_param` returns `%20`/`%3C`/etc. exactly as
+  they arrived on the wire. (`ROADMAP.md`'s Phase 3 framing, milestone
+  40, not started)
+- **`aint run`/`aint test` never read a `.env` file** — every real
+  model call needs `AINT_MODEL_URL`/`AINT_MODEL_NAME`/
+  `AINT_MODEL_API_KEY` exported by hand first. (`ROADMAP.md`'s Phase 3
+  framing, milestone 41, not started)
