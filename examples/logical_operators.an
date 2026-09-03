@@ -1,0 +1,42 @@
+// `&&`/`||` short-circuit (milestone 38): the right operand isn't
+// evaluated at all once the left side already decides the result -
+// not just an ordering guarantee. `10 / x` below would crash the
+// whole program with a division-by-zero if it ever ran when `x` is
+// 0; it doesn't, because `x != 0` already being false means `&&`
+// never evaluates the right side at all.
+fn safe_divide_check(x: Int) -> String {
+    if x != 0 && (10 / x) > 1 {
+        return "large"
+    } else {
+        return "zero or small"
+    }
+}
+
+fn log_true(label: String) -> Bool {
+    print(label)
+    return true
+}
+
+fn log_false(label: String) -> Bool {
+    print(label)
+    return false
+}
+
+fn main() -> Unit {
+    print(safe_divide_check(0))
+    print(safe_divide_check(2))
+    print(safe_divide_check(20))
+
+    // The right side's own print never runs once the left operand
+    // already decided the result.
+    print(log_false("checked left, false") && log_true("never printed"))
+    print(log_true("checked left, true") || log_true("never printed"))
+}
+
+main()
+
+test "&& and || short-circuit instead of always evaluating both sides" {
+    assert safe_divide_check(0) == "zero or small"
+    assert (false && log_true("still never printed in a test")) == false
+    assert (true || log_true("still never printed in a test")) == true
+}

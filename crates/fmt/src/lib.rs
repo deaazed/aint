@@ -129,6 +129,18 @@ mod tests {
     }
 
     #[test]
+    fn formats_the_new_comparison_and_logical_operators() {
+        let output = format("print(a<=b&&b>=a||!c)").expect("should format");
+        assert_eq!(output, "print(a <= b && b >= a || !c)\n");
+    }
+
+    #[test]
+    fn keeps_parens_where_and_binds_tighter_than_the_sources_or() {
+        let output = format("print((a||b)&&c)").expect("should format");
+        assert_eq!(output, "print((a || b) && c)\n");
+    }
+
+    #[test]
     fn formats_an_else_if_statement_chain_without_extra_indentation() {
         let output = format(concat!(
             "fn grade(n: Int) -> String {\n",

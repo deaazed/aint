@@ -228,12 +228,38 @@ impl<'src> Lexer<'src> {
                     TokenKind::Equal
                 }
             }
-            '!' if self.peek() == Some('=') => {
-                self.advance();
-                TokenKind::BangEqual
+            '!' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::BangEqual
+                } else {
+                    TokenKind::Bang
+                }
             }
-            '<' => TokenKind::Less,
-            '>' => TokenKind::Greater,
+            '<' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::LessEqual
+                } else {
+                    TokenKind::Less
+                }
+            }
+            '>' => {
+                if self.peek() == Some('=') {
+                    self.advance();
+                    TokenKind::GreaterEqual
+                } else {
+                    TokenKind::Greater
+                }
+            }
+            '&' if self.peek() == Some('&') => {
+                self.advance();
+                TokenKind::AmpAmp
+            }
+            '|' if self.peek() == Some('|') => {
+                self.advance();
+                TokenKind::PipePipe
+            }
             '(' => TokenKind::LeftParen,
             ')' => TokenKind::RightParen,
             '{' => TokenKind::LeftBrace,
@@ -354,7 +380,7 @@ mod tests {
     #[test]
     fn lexes_each_operator() {
         assert_eq!(
-            kinds("+ - * / = == != < >"),
+            kinds("+ - * / = == != < > ! <= >= && ||"),
             vec![
                 TokenKind::Plus,
                 TokenKind::Minus,
@@ -365,8 +391,27 @@ mod tests {
                 TokenKind::BangEqual,
                 TokenKind::Less,
                 TokenKind::Greater,
+                TokenKind::Bang,
+                TokenKind::LessEqual,
+                TokenKind::GreaterEqual,
+                TokenKind::AmpAmp,
+                TokenKind::PipePipe,
                 TokenKind::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn a_lone_ampersand_or_pipe_is_an_unknown_character() {
+        // There's no bitwise AND/OR, and no single-`&`/`|` token at
+        // all - only the doubled `&&`/`||` forms are real syntax.
+        assert_eq!(
+            tokenize("&").unwrap_err().kind,
+            LexErrorKind::UnknownCharacter('&')
+        );
+        assert_eq!(
+            tokenize("|").unwrap_err().kind,
+            LexErrorKind::UnknownCharacter('|')
         );
     }
 
@@ -394,6 +439,10 @@ mod tests {
         assert_eq!(kinds("=="), vec![TokenKind::EqualEqual, TokenKind::Eof]);
         assert_eq!(kinds("!="), vec![TokenKind::BangEqual, TokenKind::Eof]);
         assert_eq!(kinds("->"), vec![TokenKind::Arrow, TokenKind::Eof]);
+        assert_eq!(kinds("<="), vec![TokenKind::LessEqual, TokenKind::Eof]);
+        assert_eq!(kinds(">="), vec![TokenKind::GreaterEqual, TokenKind::Eof]);
+        assert_eq!(kinds("&&"), vec![TokenKind::AmpAmp, TokenKind::Eof]);
+        assert_eq!(kinds("||"), vec![TokenKind::PipePipe, TokenKind::Eof]);
         // Not `=`, `=`, `=` or `-`, `>`.
         assert_eq!(kinds("===").len(), 3); // `==`, `=`, Eof
     }

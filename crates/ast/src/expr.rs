@@ -67,6 +67,8 @@ pub enum ExprKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Neg,
+    /// `!` (milestone 38) — Boolean negation.
+    Not,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,4 +81,14 @@ pub enum BinaryOp {
     NotEq,
     Less,
     Greater,
+    /// `<=` (milestone 38).
+    LessEq,
+    /// `>=` (milestone 38).
+    GreaterEq,
+    /// `&&` (milestone 38) — short-circuits: the right operand isn't
+    /// evaluated at all when the left is `false`.
+    And,
+    /// `||` (milestone 38) — short-circuits: the right operand isn't
+    /// evaluated at all when the left is `true`.
+    Or,
 }

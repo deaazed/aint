@@ -23,19 +23,21 @@ pub fn format_program(program: &Program) -> String {
 /// child expression needs parentheses to reproduce the same AST on
 /// re-parse — not related to the type checker's or interpreter's own
 /// logic. Higher binds tighter. Mirrors `aint-parser`'s own descent
-/// order exactly (`parse_equality` -> `parse_comparison` ->
-/// `parse_term` -> `parse_factor` -> `parse_unary`/`await` ->
-/// `parse_postfix`/primary).
+/// order exactly (`parse_or` -> `parse_and` -> `parse_equality` ->
+/// `parse_comparison` -> `parse_term` -> `parse_factor` ->
+/// `parse_unary`/`await` -> `parse_postfix`/primary).
 fn binary_precedence(op: BinaryOp) -> u8 {
     match op {
-        BinaryOp::Eq | BinaryOp::NotEq => 0,
-        BinaryOp::Less | BinaryOp::Greater => 1,
-        BinaryOp::Add | BinaryOp::Sub => 2,
-        BinaryOp::Mul | BinaryOp::Div => 3,
+        BinaryOp::Or => 0,
+        BinaryOp::And => 1,
+        BinaryOp::Eq | BinaryOp::NotEq => 2,
+        BinaryOp::Less | BinaryOp::Greater | BinaryOp::LessEq | BinaryOp::GreaterEq => 3,
+        BinaryOp::Add | BinaryOp::Sub => 4,
+        BinaryOp::Mul | BinaryOp::Div => 5,
     }
 }
-const UNARY_PRECEDENCE: u8 = 4;
-const PRIMARY_PRECEDENCE: u8 = 5;
+const UNARY_PRECEDENCE: u8 = 6;
+const PRIMARY_PRECEDENCE: u8 = 7;
 
 fn binary_symbol(op: BinaryOp) -> &'static str {
     match op {
@@ -47,6 +49,10 @@ fn binary_symbol(op: BinaryOp) -> &'static str {
         BinaryOp::NotEq => "!=",
         BinaryOp::Less => "<",
         BinaryOp::Greater => ">",
+        BinaryOp::LessEq => "<=",
+        BinaryOp::GreaterEq => ">=",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
     }
 }
 
@@ -335,6 +341,7 @@ impl Printer {
                 }
                 self.out.push_str(match op {
                     UnaryOp::Neg => "-",
+                    UnaryOp::Not => "!",
                 });
                 self.expr(operand, UNARY_PRECEDENCE);
                 if needs_parens {

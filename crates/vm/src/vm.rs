@@ -192,15 +192,25 @@ fn eval_unary(op: UnaryOp, operand: Value) -> Result<Value, RuntimeError> {
                 span: placeholder_span(),
             }),
         },
+        UnaryOp::Not => match operand {
+            Value::Bool(b) => Ok(Value::Bool(!b)),
+            other => Err(RuntimeError::TypeMismatch {
+                message: format!("cannot apply `!` to a {}", other.type_name()),
+                span: placeholder_span(),
+            }),
+        },
     }
 }
 
 /// Mirrors `aint_runtime::Interpreter`'s own (private) `eval_binary`
 /// exactly - same operator set, same per-operator type rules, same
-/// error shape. Duplicated rather than shared across the crate
-/// boundary: a handful of match arms over a fixed, tiny operator set
-/// (AINT has nine binary operators total and will not grow more,
-/// see `CONTRIBUTING.md`'s design constraints), the same scale of
+/// error shape - for every operator that actually reaches here.
+/// `&&`/`||` don't: `aint-ir` rejects them at lowering
+/// (`LowerError::UnsupportedShortCircuit`, milestone 38) rather than
+/// compiling them as an eager, non-short-circuiting evaluation, which
+/// would silently disagree with `aint run`'s real semantics. Duplicated
+/// rather than shared across the crate boundary: a handful of match
+/// arms over a small, fixed operator set, the same scale of
 /// duplication `aint-ir`'s `lower.rs` already accepted against the
 /// type checker's internals rather than exposing them. See SPEC.md.
 fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, RuntimeError> {
@@ -237,8 +247,21 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value) -> Result<Value, Runtime
             (Value::Float(l), Value::Float(r)) => Ok(Value::Bool(l > r)),
             (l, r) => Err(binary_type_mismatch(">", &l, &r)),
         },
+        BinaryOp::LessEq => match (left, right) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l <= r)),
+            (Value::Float(l), Value::Float(r)) => Ok(Value::Bool(l <= r)),
+            (l, r) => Err(binary_type_mismatch("<=", &l, &r)),
+        },
+        BinaryOp::GreaterEq => match (left, right) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l >= r)),
+            (Value::Float(l), Value::Float(r)) => Ok(Value::Bool(l >= r)),
+            (l, r) => Err(binary_type_mismatch(">=", &l, &r)),
+        },
         BinaryOp::Eq => Ok(Value::Bool(left == right)),
         BinaryOp::NotEq => Ok(Value::Bool(left != right)),
+        BinaryOp::And | BinaryOp::Or => unreachable!(
+            "aint-ir rejects And/Or at lowering (UnsupportedShortCircuit) - never reaches AIR"
+        ),
     }
 }
 

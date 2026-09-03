@@ -417,7 +417,37 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                             span: expr.span,
                         }),
                     },
+                    UnaryOp::Not => Ok(Value::Bool(!expect_bool(&v, operand.span)?)),
                 }
+            }
+            // `&&`/`||` short-circuit: the right operand isn't
+            // evaluated at all once the left already decides the
+            // result — not just an optimization, since evaluating it
+            // anyway could run a tool/infer call (or anything else
+            // with an observable effect) that shouldn't have run.
+            ExprKind::Binary {
+                op: BinaryOp::And,
+                left,
+                right,
+            } => {
+                let l = self.eval_expr(left, env).await?;
+                if !expect_bool(&l, left.span)? {
+                    return Ok(Value::Bool(false));
+                }
+                let r = self.eval_expr(right, env).await?;
+                Ok(Value::Bool(expect_bool(&r, right.span)?))
+            }
+            ExprKind::Binary {
+                op: BinaryOp::Or,
+                left,
+                right,
+            } => {
+                let l = self.eval_expr(left, env).await?;
+                if expect_bool(&l, left.span)? {
+                    return Ok(Value::Bool(true));
+                }
+                let r = self.eval_expr(right, env).await?;
+                Ok(Value::Bool(expect_bool(&r, right.span)?))
             }
             ExprKind::Binary { op, left, right } => {
                 let l = self.eval_expr(left, env).await?;
@@ -1500,8 +1530,27 @@ fn eval_binary(op: BinaryOp, left: Value, right: Value, span: Span) -> Result<Va
             (Value::Float(l), Value::Float(r)) => Ok(Value::Bool(l > r)),
             (l, r) => Err(type_mismatch(">", &l, &r, span)),
         },
+        BinaryOp::LessEq => match (left, right) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l <= r)),
+            (Value::Float(l), Value::Float(r)) => Ok(Value::Bool(l <= r)),
+            (l, r) => Err(type_mismatch("<=", &l, &r, span)),
+        },
+        BinaryOp::GreaterEq => match (left, right) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::Bool(l >= r)),
+            (Value::Float(l), Value::Float(r)) => Ok(Value::Bool(l >= r)),
+            (l, r) => Err(type_mismatch(">=", &l, &r, span)),
+        },
         BinaryOp::Eq => Ok(Value::Bool(left == right)),
         BinaryOp::NotEq => Ok(Value::Bool(left != right)),
+        // Short-circuiting means the right operand can't always be
+        // evaluated before we know whether it's needed — `eval_expr`'s
+        // own `ExprKind::Binary` arm intercepts both `And` and `Or`
+        // before either operand reaches here, so this function (which
+        // only ever receives two already-evaluated `Value`s) never
+        // actually sees them.
+        BinaryOp::And | BinaryOp::Or => {
+            unreachable!("And/Or are short-circuited in eval_expr before reaching eval_binary")
+        }
     }
 }
 
@@ -1693,6 +1742,83 @@ mod tests {
     #[test]
     fn equality_across_different_types_is_false() {
         assert_eq!(run_capturing("print(1 == \"1\")"), "false\n");
+    }
+
+    #[test]
+    fn less_equal_and_greater_equal_include_the_boundary() {
+        assert_eq!(run_capturing("print(2 <= 2)"), "true\n");
+        assert_eq!(run_capturing("print(1 <= 2)"), "true\n");
+        assert_eq!(run_capturing("print(3 <= 2)"), "false\n");
+        assert_eq!(run_capturing("print(2 >= 2)"), "true\n");
+        assert_eq!(run_capturing("print(1 >= 2)"), "false\n");
+    }
+
+    #[test]
+    fn logical_not_negates_a_bool() {
+        assert_eq!(run_capturing("print(!true)"), "false\n");
+        assert_eq!(run_capturing("print(!false)"), "true\n");
+    }
+
+    #[test]
+    fn and_or_evaluate_correctly() {
+        assert_eq!(run_capturing("print(true && true)"), "true\n");
+        assert_eq!(run_capturing("print(true && false)"), "false\n");
+        assert_eq!(run_capturing("print(false || false)"), "false\n");
+        assert_eq!(run_capturing("print(false || true)"), "true\n");
+    }
+
+    #[test]
+    fn and_genuinely_short_circuits_the_right_operand() {
+        // If `&&` evaluated both sides unconditionally, this would
+        // divide by zero and error instead of returning cleanly.
+        assert_eq!(
+            run_capturing(concat!(
+                "let x = 0\n",
+                "if x != 0 && (10 / x) > 1 {\n",
+                "    print(\"unreachable\")\n",
+                "} else {\n",
+                "    print(\"short-circuited\")\n",
+                "}\n"
+            )),
+            "short-circuited\n"
+        );
+    }
+
+    #[test]
+    fn or_genuinely_short_circuits_the_right_operand() {
+        assert_eq!(
+            run_capturing(concat!(
+                "let x = 1\n",
+                "if x == 1 || (10 / (x - 1)) > 1 {\n",
+                "    print(\"short-circuited\")\n",
+                "} else {\n",
+                "    print(\"unreachable\")\n",
+                "}\n"
+            )),
+            "short-circuited\n"
+        );
+    }
+
+    #[test]
+    fn and_or_short_circuiting_is_observable_not_just_safe() {
+        // The right side's own side effect (a print) genuinely never
+        // runs, not merely "the crash it would have caused didn't
+        // happen."
+        assert_eq!(
+            run_capturing(concat!(
+                "fn log_true(label: String) -> Bool {\n",
+                "    print(label)\n",
+                "    return true\n",
+                "}\n",
+                "fn log_false(label: String) -> Bool {\n",
+                "    print(label)\n",
+                "    return false\n",
+                "}\n",
+                "print(log_false(\"left\") && log_true(\"never printed\"))\n",
+                "print(log_true(\"left\") || log_true(\"never printed\"))\n"
+            )),
+            "left\nfalse\nleft\ntrue\n"
+        );
     }
 
     #[test]

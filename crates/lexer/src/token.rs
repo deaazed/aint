@@ -43,8 +43,19 @@ pub enum TokenKind {
     Equal,
     EqualEqual,
     BangEqual,
+    Bang,
     Less,
     Greater,
+    /// `<=` (milestone 38).
+    LessEqual,
+    /// `>=` (milestone 38).
+    GreaterEqual,
+    /// `&&` (milestone 38) — a lone `&` isn't a valid token; there's
+    /// no bitwise-AND in AINT.
+    AmpAmp,
+    /// `||` (milestone 38) — same reasoning as `AmpAmp`: a lone `|`
+    /// isn't a valid token.
+    PipePipe,
 
     // Punctuation
     LeftParen,
@@ -94,8 +105,13 @@ impl fmt::Display for TokenKind {
             TokenKind::Equal => write!(f, "`=`"),
             TokenKind::EqualEqual => write!(f, "`==`"),
             TokenKind::BangEqual => write!(f, "`!=`"),
+            TokenKind::Bang => write!(f, "`!`"),
             TokenKind::Less => write!(f, "`<`"),
             TokenKind::Greater => write!(f, "`>`"),
+            TokenKind::LessEqual => write!(f, "`<=`"),
+            TokenKind::GreaterEqual => write!(f, "`>=`"),
+            TokenKind::AmpAmp => write!(f, "`&&`"),
+            TokenKind::PipePipe => write!(f, "`||`"),
             TokenKind::LeftParen => write!(f, "`(`"),
             TokenKind::RightParen => write!(f, "`)`"),
             TokenKind::LeftBrace => write!(f, "`{{`"),

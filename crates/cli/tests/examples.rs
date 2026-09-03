@@ -231,6 +231,64 @@ fn conditional_expressions_an_test_block_passes() {
     assert!(stdout.contains("1 run, 1 passed, 0 failed"));
 }
 
+/// `examples/comparison_operators.an` uses `<=`/`>=`/`!` (milestone 38).
+/// Unlike `&&`/`||`, none of these need short-circuit evaluation, so
+/// there's no VM parity gap: this runs under the VM exactly like it
+/// does under the tree-walker.
+#[test]
+fn comparison_operators_an_runs_identically_under_the_vm() {
+    let expected = "at or below floor\nat or above ceiling\nin range\nfalse\ntrue\n";
+    let output = run_aint(&example_path("comparison_operators.an"));
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+
+    let vm_output = run_aint_vm(&example_path("comparison_operators.an"));
+    assert!(vm_output.status.success());
+    assert_eq!(String::from_utf8_lossy(&vm_output.stdout), expected);
+}
+
+#[test]
+fn comparison_operators_an_test_block_passes() {
+    let output = test_aint(&example_path("comparison_operators.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 run, 1 passed, 0 failed"));
+}
+
+/// `examples/logical_operators.an` uses `&&`/`||` (milestone 38) -
+/// short-circuit evaluation needs real conditional-jump bytecode the
+/// VM doesn't have yet, so lowering rejects it outright, the same
+/// shape as lambdas and if-expressions before it.
+#[test]
+fn a_program_using_short_circuit_operators_fails_clearly_under_the_vm() {
+    let output = run_aint_vm(&example_path("logical_operators.an"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("UnsupportedShortCircuit"),
+        "expected a clear unsupported-short-circuit message, got: {stderr}"
+    );
+}
+
+#[test]
+fn logical_operators_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("logical_operators.an"));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "zero or small\nlarge\nzero or small\nchecked left, false\nfalse\nchecked left, true\ntrue\n"
+    );
+}
+
+#[test]
+fn logical_operators_an_test_block_passes() {
+    let output = test_aint(&example_path("logical_operators.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 run, 1 passed, 0 failed"));
+}
+
 #[test]
 fn async_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("async.an"));

@@ -687,6 +687,13 @@ impl TypeChecker {
                             span: expr.span,
                         }),
                     },
+                    UnaryOp::Not => match ty {
+                        Type::Bool => Ok(Type::Bool),
+                        other => Err(TypeError::Mismatch {
+                            message: format!("cannot apply `!` to {other}; expected Bool"),
+                            span: expr.span,
+                        }),
+                    },
                 }
             }
             ExprKind::Binary { op, left, right } => {
@@ -1161,10 +1168,12 @@ fn check_binary(op: BinaryOp, left: &Type, right: &Type, span: Span) -> Result<T
             (Type::Float, Type::Float) => Ok(Type::Float),
             _ => Err(mismatch(op, left, right, span)),
         },
-        BinaryOp::Less | BinaryOp::Greater => match (left, right) {
-            (Type::Int, Type::Int) | (Type::Float, Type::Float) => Ok(Type::Bool),
-            _ => Err(mismatch(op, left, right, span)),
-        },
+        BinaryOp::Less | BinaryOp::Greater | BinaryOp::LessEq | BinaryOp::GreaterEq => {
+            match (left, right) {
+                (Type::Int, Type::Int) | (Type::Float, Type::Float) => Ok(Type::Bool),
+                _ => Err(mismatch(op, left, right, span)),
+            }
+        }
         BinaryOp::Eq | BinaryOp::NotEq => {
             if left == right {
                 Ok(Type::Bool)
@@ -1172,6 +1181,10 @@ fn check_binary(op: BinaryOp, left: &Type, right: &Type, span: Span) -> Result<T
                 Err(mismatch(op, left, right, span))
             }
         }
+        BinaryOp::And | BinaryOp::Or => match (left, right) {
+            (Type::Bool, Type::Bool) => Ok(Type::Bool),
+            _ => Err(mismatch(op, left, right, span)),
+        },
     }
 }
 
@@ -1192,6 +1205,10 @@ fn op_symbol(op: BinaryOp) -> &'static str {
         BinaryOp::NotEq => "!=",
         BinaryOp::Less => "<",
         BinaryOp::Greater => ">",
+        BinaryOp::LessEq => "<=",
+        BinaryOp::GreaterEq => ">=",
+        BinaryOp::And => "&&",
+        BinaryOp::Or => "||",
     }
 }
 
@@ -1388,6 +1405,29 @@ mod tests {
         // Stricter than the interpreter's own runtime behavior on
         // purpose - see SPEC.md.
         let err = check("print(1 == \"x\")").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn less_equal_and_greater_equal_type_check_like_less_and_greater() {
+        check("print(1 <= 2)").expect("should type-check");
+        check("print(1.5 >= 2.5)").expect("should type-check");
+        let err = check("print(1 <= \"x\")").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn logical_not_requires_a_bool_operand() {
+        check("print(!true)").expect("should type-check");
+        let err = check("print(!1)").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn logical_and_or_require_bool_operands_and_yield_bool() {
+        check("print(true && false)").expect("should type-check");
+        check("print(true || false)").expect("should type-check");
+        let err = check("print(1 && true)").unwrap_err();
         assert!(matches!(err, TypeError::Mismatch { .. }));
     }
 

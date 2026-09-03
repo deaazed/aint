@@ -300,15 +300,19 @@ call in both branches rather than compute a value once. Interpreter-only
 as closures. See
 `docs/milestones/37-conditional-expressions/SPEC.md`.
 
-## 38 — Missing comparison and logical operators
+## 38 — Missing comparison and logical operators — done
 
 `<=`, `>=`, `!`, `&&`, `||` — reached for by reflex, absent since day
-one. `&&`/`||` short-circuit, matching every other language that has
-them; worth stating explicitly in `SPEC.md`, since evaluation order
-starts to matter once a `tool`/`infer` call can appear in an operand.
+one. `&&`/`||` genuinely short-circuit — the right operand isn't
+evaluated at all once the left side already decides the result, proven
+with tests that would crash or print unexpectedly if it didn't.
 Directly hit writing `aint-website`'s own HTML-escaping helper: a
 boundary check that should have been `index >= length - 1` had to be
-inverted, and its branches swapped, to work with only `<`.
+inverted, and its branches swapped, to work with only `<`. `<=`/`>=`/`!`
+run under the bytecode VM with no parity gap; `&&`/`||` are rejected
+there explicitly (short-circuiting would need real conditional-jump
+bytecode), the same shape as closures and if-expressions. See
+`docs/milestones/38-comparison-and-logical-operators/SPEC.md`.
 
 ## 39 — String stdlib: replace
 

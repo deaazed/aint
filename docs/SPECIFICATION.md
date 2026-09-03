@@ -309,18 +309,29 @@ implementation reports real usage yet) — see
 ```
 Integer, Float, String, Bool literals
 Identifier
--expr                          (unary negation only)
-left OP right                   (OP: + - * / == != < >)
+-expr                            (unary negation)
+!expr                            (unary Boolean negation, milestone 38)
+left OP right                    (OP: + - * / == != < > <= >= && ||)
 callee(arg, arg, ...)
-[expr, expr, ...]                (list literal)
-expr[expr]                       (indexing)
+[expr, expr, ...]                 (list literal)
+expr[expr]                        (indexing)
 await expr
+fn(param: Type, ...) -> Type { ... }    (lambda, milestone 30 — see §4.3)
+if condition { value } else { value }   (milestone 37 — see §4.2)
 ```
 
-Precedence, lowest to highest: `==`/`!=` < `<`/`>` < `+`/`-` <
-`*`/`/` < unary `-`/`await` < calls/indexing/literals. All binary
-operators are left-associative. Calls and indexing are freely
-mixable and left-associative (`f()[0]`, `list[0]()`).
+Precedence, lowest to highest: `||` < `&&` < `==`/`!=` < `<`/`>`/`<=`/
+`>=` < `+`/`-` < `*`/`/` < unary `-`/`!`/`await` < calls/indexing/
+literals. All binary operators are left-associative, including `&&`
+and `||` — though associativity is moot for a pure Boolean-and/or pair
+in practice. `&&` and `||` also **short-circuit** (milestone 38): the
+right operand isn't evaluated at all once the left side already
+decides the result — not just an evaluation-order guarantee, since a
+right operand with an observable effect (a `tool`/`infer` call, or
+simply code that would otherwise error, like `10 / x` when `x` is
+statically unknown to be nonzero) genuinely never runs. Every other
+binary operator always evaluates both operands. Calls and indexing are
+freely mixable and left-associative (`f()[0]`, `list[0]()`).
 
 **No `Option<T>`/`Distribution<T>` construction syntax.** These types
 have values only via specific stdlib natives
@@ -463,6 +474,15 @@ it was found):
   same reasoning and same shape as the closures gap above — the
   *statement* form of `if`/`else` is unaffected either way. (§4.2,
   `docs/milestones/37-conditional-expressions/SPEC.md`)
+- **`&&`/`||` don't run under `aint run --vm`.** Short-circuit
+  evaluation needs real conditional-jump bytecode, not the "evaluate
+  both operands, then apply the operator" shape every other binary
+  operator compiles to — fails clearly at IR lowering
+  (`LowerError::UnsupportedShortCircuit`), same shape as the closures
+  and if-expression gaps above. `<=`/`>=`/`!` have no such gap — they
+  need no short-circuiting, so they run under the VM exactly like every
+  other comparison/unary operator already did. (§5,
+  `docs/milestones/38-comparison-and-logical-operators/SPEC.md`)
 - **No generics, structs, or interfaces/traits.** Closures (milestone
   30) were deliberately the smallest lever for passing behavior around
   — these stay out of scope until real framework-building shows what's
@@ -496,10 +516,6 @@ it was found):
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.
   (`docs/milestones/25-real-application/SPEC.md`)
-- **No `<=`, `>=`, `!`, `&&`, or `||`.** Present since day one; every
-  boundary check or compound condition needs restating in terms of `<`,
-  `>`, and `==`. (`ROADMAP.md`'s Phase 3 framing, milestone 38, not
-  started)
 - **No `string_replace`** — or any stdlib string operation beyond
   `string_split`/`string_concat`/`string_length`/`string_trim`/
   `string_contains`/`string_to_upper`/`string_to_lower`. Escaping HTML

@@ -1,0 +1,38 @@
+// `<=`, `>=`, `!` (milestone 38) - unlike `&&`/`||`, none of these
+// need short-circuit evaluation, so they run under the bytecode VM
+// exactly like every other comparison operator already did - no
+// parity gap here (see examples/logical_operators.an for the one
+// operator pair that does have one).
+fn clamp_label(n: Int, low: Int, high: Int) -> String {
+    if n <= low {
+        return "at or below floor"
+    } else {
+        if n >= high {
+            return "at or above ceiling"
+        } else {
+            return "in range"
+        }
+    }
+}
+
+fn is_not_zero(n: Int) -> Bool {
+    return !(n == 0)
+}
+
+fn main() -> Unit {
+    print(clamp_label(0, 0, 10))
+    print(clamp_label(10, 0, 10))
+    print(clamp_label(5, 0, 10))
+    print(is_not_zero(0))
+    print(is_not_zero(7))
+}
+
+main()
+
+test "<=, >=, and ! behave as expected at the boundaries" {
+    assert clamp_label(-1, 0, 10) == "at or below floor"
+    assert clamp_label(11, 0, 10) == "at or above ceiling"
+    assert clamp_label(5, 0, 10) == "in range"
+    assert is_not_zero(0) == false
+    assert is_not_zero(1) == true
+}

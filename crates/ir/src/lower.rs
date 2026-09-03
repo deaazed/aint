@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use aint_ast::{Block, Expr, ExprKind, Program, Span, Stmt, StmtKind};
+use aint_ast::{BinaryOp, Block, Expr, ExprKind, Program, Span, Stmt, StmtKind};
 
 use crate::air::{AirBlock, AirExpr, AirProgram, AirStmt, DistributionOp};
 
@@ -43,6 +43,14 @@ pub enum LowerError {
     /// the expression form lowers through here at all. See
     /// `docs/milestones/37-conditional-expressions/SPEC.md`.
     UnsupportedIfExpr { span: Span },
+    /// `&&`/`||` (milestone 38). Short-circuit evaluation means the
+    /// right operand must not always run — real conditional-jump
+    /// bytecode, not the "evaluate both operands eagerly" shape every
+    /// other binary operator lowers to. A documented parity gap, not
+    /// an eagerly-evaluated (and therefore semantically different)
+    /// miscompilation. See
+    /// `docs/milestones/38-comparison-and-logical-operators/SPEC.md`.
+    UnsupportedShortCircuit { span: Span },
 }
 
 /// Lowers an entire program. Expects `program` to already be
@@ -178,6 +186,19 @@ impl Lowerer {
                 op: *op,
                 operand: Box::new(self.lower_expr(operand)?),
             }),
+            // `&&`/`||` short-circuit (milestone 38) - the right
+            // operand must not always be evaluated, which needs real
+            // conditional-jump bytecode, not the "evaluate both
+            // operands, then apply the op" shape every other binary
+            // operator compiles to. Rejected here rather than silently
+            // compiled as eager-both-sides evaluation, which would be
+            // a real semantic difference from `aint run`, not just a
+            // missing feature. Same shape as `UnsupportedLambda`/
+            // `UnsupportedIfExpr`.
+            ExprKind::Binary {
+                op: BinaryOp::And | BinaryOp::Or,
+                ..
+            } => Err(LowerError::UnsupportedShortCircuit { span: expr.span }),
             ExprKind::Binary { op, left, right } => Ok(AirExpr::Binary {
                 op: *op,
                 left: Box::new(self.lower_expr(left)?),
@@ -304,6 +325,47 @@ mod tests {
                 args: vec![AirExpr::Integer(1)],
             }
         );
+    }
+
+    /// `<=`/`>=`/`!` (milestone 38) need no short-circuiting, so —
+    /// unlike `&&`/`||` — they lower exactly like every other
+    /// comparison/unary operator: no parity gap, no rejection.
+    #[test]
+    fn less_equal_greater_equal_and_not_lower_normally() {
+        assert_eq!(
+            lower_single_expr_stmt("print(1 <= 2)"),
+            AirExpr::Call {
+                callee: "print".to_string(),
+                args: vec![AirExpr::Binary {
+                    op: aint_ast::BinaryOp::LessEq,
+                    left: Box::new(AirExpr::Integer(1)),
+                    right: Box::new(AirExpr::Integer(2)),
+                }],
+            }
+        );
+        assert_eq!(
+            lower_single_expr_stmt("print(!true)"),
+            AirExpr::Call {
+                callee: "print".to_string(),
+                args: vec![AirExpr::Unary {
+                    op: aint_ast::UnaryOp::Not,
+                    operand: Box::new(AirExpr::Bool(true)),
+                }],
+            }
+        );
+    }
+
+    #[test]
+    fn and_or_are_rejected_at_lowering() {
+        let program = aint_parser::parse_source("print(true && false)").expect("should parse");
+        aint_typechecker::check_program(&program).expect("should type-check");
+        let err = lower(&program).expect_err("&& should be rejected at lowering");
+        assert!(matches!(err, LowerError::UnsupportedShortCircuit { .. }));
+
+        let program = aint_parser::parse_source("print(true || false)").expect("should parse");
+        aint_typechecker::check_program(&program).expect("should type-check");
+        let err = lower(&program).expect_err("|| should be rejected at lowering");
+        assert!(matches!(err, LowerError::UnsupportedShortCircuit { .. }));
     }
 
     #[test]

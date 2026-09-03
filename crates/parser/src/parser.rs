@@ -699,7 +699,27 @@ impl Parser {
     // --- expressions, lowest to highest precedence --------------------
 
     fn parse_expr(&mut self) -> Result<Expr, ParseError> {
-        self.parse_equality()
+        self.parse_or()
+    }
+
+    /// `||` (milestone 38) — loosest-binding operator, so `a == b ||
+    /// c == d` parses as `(a == b) || (c == d)`, not `a == (b || c) ==
+    /// d`.
+    fn parse_or(&mut self) -> Result<Expr, ParseError> {
+        self.parse_binary_level(Self::parse_and, |kind| match kind {
+            TokenKind::PipePipe => Some(BinaryOp::Or),
+            _ => None,
+        })
+    }
+
+    /// `&&` (milestone 38) — binds tighter than `||`, looser than
+    /// `==`/`!=`, matching every other language with both: `a || b &&
+    /// c` is `a || (b && c)`.
+    fn parse_and(&mut self) -> Result<Expr, ParseError> {
+        self.parse_binary_level(Self::parse_equality, |kind| match kind {
+            TokenKind::AmpAmp => Some(BinaryOp::And),
+            _ => None,
+        })
     }
 
     fn parse_equality(&mut self) -> Result<Expr, ParseError> {
@@ -714,6 +734,8 @@ impl Parser {
         self.parse_binary_level(Self::parse_term, |kind| match kind {
             TokenKind::Less => Some(BinaryOp::Less),
             TokenKind::Greater => Some(BinaryOp::Greater),
+            TokenKind::LessEqual => Some(BinaryOp::LessEq),
+            TokenKind::GreaterEqual => Some(BinaryOp::GreaterEq),
             _ => None,
         })
     }
@@ -767,6 +789,18 @@ impl Parser {
             return Ok(Expr::new(
                 ExprKind::Unary {
                     op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                },
+                span,
+            ));
+        }
+        if matches!(self.current().kind, TokenKind::Bang) {
+            let bang = self.advance();
+            let operand = self.parse_unary()?;
+            let span = Span::new(bang.span.start, operand.span.end);
+            return Ok(Expr::new(
+                ExprKind::Unary {
+                    op: UnaryOp::Not,
                     operand: Box::new(operand),
                 },
                 span,
@@ -966,12 +1000,17 @@ mod tests {
             BinaryOp::NotEq => "!=",
             BinaryOp::Less => "<",
             BinaryOp::Greater => ">",
+            BinaryOp::LessEq => "<=",
+            BinaryOp::GreaterEq => ">=",
+            BinaryOp::And => "&&",
+            BinaryOp::Or => "||",
         }
     }
 
     fn unary_op_str(op: UnaryOp) -> &'static str {
         match op {
             UnaryOp::Neg => "-",
+            UnaryOp::Not => "!",
         }
     }
 
@@ -1025,6 +1064,44 @@ mod tests {
     #[test]
     fn left_associative_subtraction() {
         assert_eq!(expr_str("10 - 3 - 2"), "(- (- 10 3) 2)");
+    }
+
+    #[test]
+    fn parses_less_equal_and_greater_equal() {
+        assert_eq!(expr_str("1 <= 2"), "(<= 1 2)");
+        assert_eq!(expr_str("1 >= 2"), "(>= 1 2)");
+    }
+
+    #[test]
+    fn parses_logical_not() {
+        assert_eq!(expr_str("!a"), "(! a)");
+    }
+
+    #[test]
+    fn logical_not_binds_tighter_than_binary() {
+        // `!` is unary, same shape as `-`: `!a == b` is `(!a) == b`,
+        // not `!(a == b)`.
+        assert_eq!(expr_str("!a == b"), "(== (! a) b)");
+    }
+
+    #[test]
+    fn precedence_equality_before_and() {
+        assert_eq!(expr_str("a == b && c == d"), "(&& (== a b) (== c d))");
+    }
+
+    #[test]
+    fn precedence_and_before_or() {
+        // `a || b && c` is `a || (b && c)`, matching every other
+        // language that has both operators.
+        assert_eq!(expr_str("a || b && c"), "(|| a (&& b c))");
+    }
+
+    #[test]
+    fn or_and_and_are_the_loosest_binding_operators() {
+        assert_eq!(
+            expr_str("a + 1 < b && c == d || e"),
+            "(|| (&& (< (+ a 1) b) (== c d)) e)"
+        );
     }
 
     #[test]
