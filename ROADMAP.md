@@ -336,16 +336,18 @@ and `examples/router/router.an`'s `find_param` composing it with
 gap — a plain native call. See
 `docs/milestones/40-url-decoding/SPEC.md`.
 
-## 41 — `aint run`/`aint test` load `.env` automatically
+## 41 — `aint` loads `.env` automatically — done
 
-`aint` has never read a `.env` file — every real model call needs the
+`aint` had never read a `.env` file — every real model call needed the
 caller to export `AINT_MODEL_URL`/`AINT_MODEL_NAME`/`AINT_MODEL_API_KEY`
 by hand first, which is why `aint-website` needed its own `run.ps1`
-just to start the site with real credentials. Smaller than 37–40, and
-arguably CLI ergonomics more than language design, but it's exactly the
-kind of first-run friction that decides whether someone gets a live
-demo working at all — worth doing while this phase is already looking
-at what dogfooding actually cost.
+just to start the site with real credentials. Every subcommand loads
+`.env` from the current directory once, up front, before anything
+else — a real environment variable always wins. Smaller than 37–40,
+and arguably CLI ergonomics more than language design, but it's
+exactly the kind of first-run friction that decides whether someone
+gets a live demo working at all. The last of Phase 3's five
+milestones. See `docs/milestones/41-dotenv/SPEC.md`.
 
 ---
 

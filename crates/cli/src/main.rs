@@ -116,6 +116,7 @@ enum Command {
 const STACK_SIZE: usize = 64 * 1024 * 1024;
 
 fn main() -> ExitCode {
+    load_dotenv();
     let cli = Cli::parse();
 
     std::thread::Builder::new()
@@ -133,6 +134,57 @@ fn main() -> ExitCode {
         .expect("failed to spawn the interpreter thread")
         .join()
         .expect("the interpreter thread panicked")
+}
+
+/// Loads `.env` from the current directory into the process
+/// environment, if one exists (milestone 41) — every real model call
+/// needed `AINT_MODEL_URL`/`AINT_MODEL_NAME`/`AINT_MODEL_API_KEY`
+/// exported by hand before this, which is why a standalone project
+/// using `infer` against a real model needed its own wrapper script
+/// just to start with real credentials. A real environment variable
+/// always wins — a `.env` value only fills in one that isn't already
+/// set, never overrides one that is. Silently does nothing if no
+/// `.env` file exists: this is a convenience, not a requirement, and
+/// every command that doesn't touch a model (`check`/`fmt`/`init`/
+/// `add`/`test`, which always mocks regardless — see
+/// `CONTRIBUTING.md`) is completely unaffected either way. Runs once,
+/// on the main thread, before the interpreter thread is ever spawned
+/// — `std::env::set_var` documents itself as unsound to call
+/// concurrently with another thread reading the environment, which is
+/// exactly what would happen if this ran any later.
+fn load_dotenv() {
+    let Ok(text) = fs::read_to_string(".env") else {
+        return;
+    };
+    for (key, value) in parse_dotenv(&text) {
+        if std::env::var_os(&key).is_none() {
+            // SAFETY: called once, from `main`, before the interpreter
+            // thread (the only other thread `aint` ever spawns) exists
+            // — nothing else can be reading the environment
+            // concurrently yet.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+        }
+    }
+}
+
+/// Parses `.env`-file text into `(key, value)` pairs — blank lines and
+/// `#`-comment lines skipped, `KEY=VALUE` split at the first `=` (a
+/// value may itself contain one), both sides trimmed. No quote-
+/// stripping, no multi-line values, no `export` prefix — the same
+/// minimal shape this project's own `.env.example` files already use.
+fn parse_dotenv(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                return None;
+            }
+            let (key, value) = trimmed.split_once('=')?;
+            Some((key.trim().to_string(), value.trim().to_string()))
+        })
+        .collect()
 }
 
 /// Reads, resolves cross-file imports, parses, and type-checks `path` —
@@ -616,5 +668,67 @@ mod tests {
     fn extract_source_strips_surrounding_whitespace() {
         let response = "\n\n  ```an\nprint(\"hi\")\n```\n\n";
         assert_eq!(extract_source(response), "print(\"hi\")");
+    }
+
+    #[test]
+    fn parse_dotenv_reads_key_value_pairs() {
+        let text =
+            "AINT_MODEL_URL=https://api.mistral.ai/v1\nAINT_MODEL_NAME=mistral-small-latest\n";
+        assert_eq!(
+            parse_dotenv(text),
+            vec![
+                (
+                    "AINT_MODEL_URL".to_string(),
+                    "https://api.mistral.ai/v1".to_string()
+                ),
+                (
+                    "AINT_MODEL_NAME".to_string(),
+                    "mistral-small-latest".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_dotenv_skips_blank_lines_and_comments() {
+        let text = "\n# a comment\n\nKEY=value\n  # another comment\n";
+        assert_eq!(
+            parse_dotenv(text),
+            vec![("KEY".to_string(), "value".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_dotenv_trims_whitespace_around_key_and_value() {
+        let text = "  KEY  =  value with spaces  \n";
+        assert_eq!(
+            parse_dotenv(text),
+            vec![("KEY".to_string(), "value with spaces".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_dotenv_splits_only_on_the_first_equals() {
+        // A value containing `=` (a URL query string, say) survives
+        // intact rather than getting truncated.
+        let text = "KEY=a=b=c\n";
+        assert_eq!(
+            parse_dotenv(text),
+            vec![("KEY".to_string(), "a=b=c".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_dotenv_ignores_a_line_with_no_equals_sign() {
+        let text = "not a valid line\nKEY=value\n";
+        assert_eq!(
+            parse_dotenv(text),
+            vec![("KEY".to_string(), "value".to_string())]
+        );
+    }
+
+    #[test]
+    fn parse_dotenv_on_empty_text_yields_nothing() {
+        assert_eq!(parse_dotenv(""), Vec::<(String, String)>::new());
     }
 }

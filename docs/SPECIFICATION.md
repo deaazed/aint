@@ -386,6 +386,15 @@ calling or `Distribution<T>` requests — see
 statements. Tool execution (`await my_tool(...)`, from any context)
 always uses `MockTool` — no real tool backend exists; see §9.
 
+Every `aint` subcommand loads a `.env` file from the current directory
+into the process environment before doing anything else, if one exists
+(milestone 41) — the same `KEY=VALUE` shape this project's own
+`.env.example` files use (blank lines and `#` comments skipped, no
+quote-stripping, no `export` prefix). A real environment variable
+always wins: `.env` only fills in one that isn't already set. Silent,
+harmless no-op when no `.env` file exists, or for a command that never
+touches a model anyway (`check`/`fmt`/`init`/`add`/`test`).
+
 ## 8. Errors
 
 Two error families, both positioned (`file:line:column: message`)
@@ -516,7 +525,3 @@ it was found):
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.
   (`docs/milestones/25-real-application/SPEC.md`)
-- **`aint run`/`aint test` never read a `.env` file** — every real
-  model call needs `AINT_MODEL_URL`/`AINT_MODEL_NAME`/
-  `AINT_MODEL_API_KEY` exported by hand first. (`ROADMAP.md`'s Phase 3
-  framing, milestone 41, not started)
