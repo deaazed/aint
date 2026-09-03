@@ -134,6 +134,37 @@ impl Printer {
         self.out.push('}');
     }
 
+    /// Prints `if cond { ... }`, then its `else`, without the leading
+    /// indentation `stmt()` adds for an ordinary statement — shared
+    /// between a top-level `if` and the recursive `else if` case,
+    /// which continues on the same line as the `} else ` that led into
+    /// it. `parse_if_statement` desugars `else if cond { ... }` into
+    /// `else { if cond { ... } }` (a `Block` holding exactly one `If`
+    /// statement and nothing else); recognizing that exact shape here
+    /// is what prints it back out as `else if` instead of an extra,
+    /// unwanted level of nested braces.
+    fn if_stmt(&mut self, condition: &Expr, then_branch: &Block, else_branch: &Option<Block>) {
+        self.out.push_str("if ");
+        self.expr(condition, 0);
+        self.out.push(' ');
+        self.block(then_branch);
+        if let Some(else_branch) = else_branch {
+            self.out.push_str(" else ");
+            match else_branch.statements.as_slice() {
+                [Stmt {
+                    kind:
+                        StmtKind::If {
+                            condition,
+                            then_branch,
+                            else_branch,
+                        },
+                    ..
+                }] => self.if_stmt(condition, then_branch, else_branch),
+                _ => self.block(else_branch),
+            }
+        }
+    }
+
     fn params(&mut self, params: &[Param]) {
         for (i, param) in params.iter().enumerate() {
             if i > 0 {
@@ -163,16 +194,7 @@ impl Printer {
                 condition,
                 then_branch,
                 else_branch,
-            } => {
-                self.out.push_str("if ");
-                self.expr(condition, 0);
-                self.out.push(' ');
-                self.block(then_branch);
-                if let Some(else_branch) = else_branch {
-                    self.out.push_str(" else ");
-                    self.block(else_branch);
-                }
-            }
+            } => self.if_stmt(condition, then_branch, else_branch),
             StmtKind::Fn {
                 name,
                 params,
@@ -383,6 +405,27 @@ impl Printer {
                 self.out.push_str(&return_type.to_string());
                 self.out.push(' ');
                 self.block(body);
+            }
+            ExprKind::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                self.out.push_str("if ");
+                self.expr(condition, 0);
+                self.out.push_str(" { ");
+                self.expr(then_value, 0);
+                self.out.push_str(" } else ");
+                // A chained `else if` is directly another `ExprKind::If`
+                // in `else_value` (see the AST doc comment) — printed
+                // flat, without wrapping it in a redundant `{ }`.
+                if let ExprKind::If { .. } = &else_value.kind {
+                    self.expr(else_value, 0);
+                } else {
+                    self.out.push_str("{ ");
+                    self.expr(else_value, 0);
+                    self.out.push_str(" }");
+                }
             }
         }
     }

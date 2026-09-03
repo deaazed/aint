@@ -88,11 +88,35 @@ the-stack design possible.
 ```
 if condition { ... }
 if condition { ... } else { ... }
+if condition { ... } else if condition { ... } else { ... }
 ```
 
-`else` is always followed by a block — there is no `else if` as its
-own syntax; a chain is written as nested `if` inside the `else`
-block. `condition` must be `Bool`.
+The statement form's `else` is optional, and — since milestone 37 —
+`else if` is real syntax: sugar for `else { if ... }`, applied at
+parse time, so an arbitrarily long `else if` chain is one flat
+sequence in the source with no extra nesting, even though the AST
+underneath is still nested `if`s inside `else`. `condition` must be
+`Bool`.
+
+`if`/`else` is also usable as an *expression* (milestone 37):
+
+```
+let x = if condition { value } else { value }
+let x = if condition { value } else if condition { value } else { value }
+```
+
+Each branch here is exactly one expression, not a block of statements
+— `let`/`return`/other statements aren't allowed inside `{ }` in this
+position — and `else` is required, not optional, since both branches
+must produce a value of the same type. `else if` works the same way as
+the statement form: the parser recurses directly into another
+`if`-expression for `else_value` rather than requiring `{ }` around
+it. This form is a genuinely separate AST node
+(`ExprKind::If`, distinct from `StmtKind::If`) reachable only from
+expression position — a bare `if` at the start of a statement always
+parses as the statement form above, so every program written before
+milestone 37 is unaffected. See
+`docs/milestones/37-conditional-expressions/SPEC.md`.
 
 ### 4.3 `fn` / `async fn`
 
@@ -434,6 +458,11 @@ it was found):
   name fails clearly at VM compilation (it was never in the VM's
   compile-time function table). Both documented parity gaps, not
   attempted. (§4.3, `docs/milestones/30-closures/SPEC.md`)
+- **`if`/`else` used as an expression doesn't run under `aint run
+  --vm`.** Fails clearly at IR lowering (`LowerError::UnsupportedIfExpr`),
+  same reasoning and same shape as the closures gap above — the
+  *statement* form of `if`/`else` is unaffected either way. (§4.2,
+  `docs/milestones/37-conditional-expressions/SPEC.md`)
 - **No generics, structs, or interfaces/traits.** Closures (milestone
   30) were deliberately the smallest lever for passing behavior around
   — these stay out of scope until real framework-building shows what's
@@ -467,13 +496,6 @@ it was found):
   real concurrency would need either `tokio::task::spawn_local` under
   a `LocalSet` or moving `Value` off `Rc`, neither attempted.
   (`docs/milestones/25-real-application/SPEC.md`)
-- **`if`/`else` is a statement, not an expression** — no `let x = if
-  cond { a } else { b }`, and no `else if` sugar (an `else if` chain is
-  written as nested `if`s inside `else`). Found costly building a real
-  website on top of AINT: computing one of several values still means
-  duplicating the surrounding code in every branch instead of returning
-  a value once. (`ROADMAP.md`'s Phase 3 framing, milestone 37, not
-  started)
 - **No `<=`, `>=`, `!`, `&&`, or `||`.** Present since day one; every
   boundary check or compound condition needs restating in terms of `<`,
   `>`, and `==`. (`ROADMAP.md`'s Phase 3 framing, milestone 38, not

@@ -36,6 +36,13 @@ pub enum LowerError {
     /// that mechanism alone wouldn't catch. See
     /// `docs/milestones/30-closures/SPEC.md`.
     UnsupportedLambda { span: Span },
+    /// `if cond { a } else { b }` used as a value (milestone 37). Like
+    /// `UnsupportedLambda`, a documented parity gap for the bytecode
+    /// VM's deterministic core, not an attempted-and-failed
+    /// miscompilation — `if` used as a *statement* is unaffected; only
+    /// the expression form lowers through here at all. See
+    /// `docs/milestones/37-conditional-expressions/SPEC.md`.
+    UnsupportedIfExpr { span: Span },
 }
 
 /// Lowers an entire program. Expects `program` to already be
@@ -189,6 +196,7 @@ impl Lowerer {
             ExprKind::Await(inner) => Ok(AirExpr::Await(Box::new(self.lower_expr(inner)?))),
             ExprKind::Call { callee, args } => self.lower_call(callee, args, expr.span),
             ExprKind::Lambda { .. } => Err(LowerError::UnsupportedLambda { span: expr.span }),
+            ExprKind::If { .. } => Err(LowerError::UnsupportedIfExpr { span: expr.span }),
         }
     }
 

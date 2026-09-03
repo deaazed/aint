@@ -786,6 +786,30 @@ impl TypeChecker {
                     Box::new(return_type.clone()),
                 ))
             }
+            ExprKind::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let cond_ty = self.check_expr(condition)?;
+                if cond_ty != Type::Bool {
+                    return Err(TypeError::Mismatch {
+                        message: format!("expected Bool, found {cond_ty}"),
+                        span: condition.span,
+                    });
+                }
+                let then_ty = self.check_expr(then_value)?;
+                let else_ty = self.check_expr(else_value)?;
+                if then_ty != else_ty {
+                    return Err(TypeError::Mismatch {
+                        message: format!(
+                            "if's two branches must agree: {then_ty} in the `if` branch, {else_ty} in the `else` branch"
+                        ),
+                        span: expr.span,
+                    });
+                }
+                Ok(then_ty)
+            }
         }
     }
 
@@ -1309,6 +1333,34 @@ mod tests {
         ))
         .unwrap_err();
         assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn an_if_expression_yields_the_common_branch_type() {
+        check("let x = if true { 1 } else { 2 }\nprint(x)").expect("should type-check");
+    }
+
+    #[test]
+    fn an_if_expression_condition_must_be_bool() {
+        let err = check("let x = if 1 { 1 } else { 2 }").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn an_if_expressions_branches_must_agree_in_type() {
+        let err = check("let x = if true { 1 } else { \"nope\" }").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn an_else_if_expression_chain_type_checks_through_every_link() {
+        check(concat!(
+            "fn sign(n: Int) -> String {\n",
+            "    return if n < 0 { \"negative\" } else if n == 0 { \"zero\" } else { \"positive\" }\n",
+            "}\n",
+            "print(sign(-1))"
+        ))
+        .expect("should type-check");
     }
 
     #[test]

@@ -302,6 +302,18 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
                 body: b2,
             },
         ) => params_eq(p1, p2) && r1 == r2 && block_eq(b1, b2),
+        (
+            ExprKind::If {
+                condition: c1,
+                then_value: t1,
+                else_value: e1,
+            },
+            ExprKind::If {
+                condition: c2,
+                then_value: t2,
+                else_value: e2,
+            },
+        ) => expr_eq(c1, c2) && expr_eq(t1, t2) && expr_eq(e1, e2),
         _ => false,
     }
 }

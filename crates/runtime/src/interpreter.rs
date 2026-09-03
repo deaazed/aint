@@ -486,6 +486,18 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     }),
                 }
             }
+            ExprKind::If {
+                condition,
+                then_value,
+                else_value,
+            } => {
+                let cond = self.eval_expr(condition, env).await?;
+                if expect_bool(&cond, condition.span)? {
+                    self.eval_expr(then_value, env).await
+                } else {
+                    self.eval_expr(else_value, env).await
+                }
+            }
             ExprKind::Lambda { params, body, .. } => Ok(Value::Function(Rc::new(Function {
                 name: "<lambda>".to_string(),
                 params: params.iter().map(|p| p.name.clone()).collect(),
@@ -1610,6 +1622,33 @@ mod tests {
         assert_eq!(
             run_capturing("print((fn(x: Int) -> Int {\n    return x * x\n})(4))"),
             "16\n"
+        );
+    }
+
+    #[test]
+    fn an_if_expression_evaluates_the_taken_branch() {
+        assert_eq!(
+            run_capturing("let x = if true { 1 } else { 2 }\nprint(x)"),
+            "1\n"
+        );
+        assert_eq!(
+            run_capturing("let x = if false { 1 } else { 2 }\nprint(x)"),
+            "2\n"
+        );
+    }
+
+    #[test]
+    fn an_else_if_expression_chain_evaluates_the_first_matching_branch() {
+        assert_eq!(
+            run_capturing(concat!(
+                "fn sign(n: Int) -> String {\n",
+                "    return if n < 0 { \"negative\" } else if n == 0 { \"zero\" } else { \"positive\" }\n",
+                "}\n",
+                "print(sign(-1))\n",
+                "print(sign(0))\n",
+                "print(sign(1))\n"
+            )),
+            "negative\nzero\npositive\n"
         );
     }
 

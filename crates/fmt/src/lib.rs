@@ -112,4 +112,43 @@ mod tests {
         let err = format("let x = ").unwrap_err();
         assert!(matches!(err, FormatError::Parse(_)));
     }
+
+    #[test]
+    fn formats_an_if_expression_on_one_line() {
+        let output = format("let x=if a{1}else{2}\nprint(x)").expect("should format");
+        assert_eq!(output, "let x = if a { 1 } else { 2 }\nprint(x)\n");
+    }
+
+    #[test]
+    fn formats_a_chained_if_expression_flat_not_nested() {
+        let output = format("let x=if a{1}else if b{2}else{3}\nprint(x)").expect("should format");
+        assert_eq!(
+            output,
+            "let x = if a { 1 } else if b { 2 } else { 3 }\nprint(x)\n"
+        );
+    }
+
+    #[test]
+    fn formats_an_else_if_statement_chain_without_extra_indentation() {
+        let output = format(concat!(
+            "fn grade(n: Int) -> String {\n",
+            "if n<60{return \"F\"}else if n<70{return \"D\"}else{return \"A\"}\n",
+            "}"
+        ))
+        .expect("should format");
+        assert_eq!(
+            output,
+            concat!(
+                "fn grade(n: Int) -> String {\n",
+                "    if n < 60 {\n",
+                "        return \"F\"\n",
+                "    } else if n < 70 {\n",
+                "        return \"D\"\n",
+                "    } else {\n",
+                "        return \"A\"\n",
+                "    }\n",
+                "}\n"
+            )
+        );
+    }
 }

@@ -427,6 +427,15 @@ fn rename_expr(expr: Expr, map: &std::collections::HashMap<String, String>) -> E
             return_type: rename_type(return_type, map),
             body: rename_block(body, map),
         },
+        ExprKind::If {
+            condition,
+            then_value,
+            else_value,
+        } => ExprKind::If {
+            condition: Box::new(rename_expr(*condition, map)),
+            then_value: Box::new(rename_expr(*then_value, map)),
+            else_value: Box::new(rename_expr(*else_value, map)),
+        },
         other @ (ExprKind::Integer(_)
         | ExprKind::Float(_)
         | ExprKind::String(_)

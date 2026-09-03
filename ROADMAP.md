@@ -285,7 +285,7 @@ against Mistral. That was a correctness bug, not an ergonomics gap, and
 is already fixed — see the `[F]` commit bumping to 0.1.1, not a Phase 3
 milestone.)
 
-## 37 — Conditional expressions
+## 37 — Conditional expressions — done
 
 `if`/`else` becomes usable as an expression, not just a statement:
 `let x = if cond { a } else { b }`, both branches required and
@@ -295,7 +295,10 @@ still optional) is unchanged. `else if` comes along as sugar for
 this. The single highest-leverage fix `aint-website` found: a
 four-variant label function needed three levels of nested `if`/`else`,
 and a two-branch page handler had to duplicate its entire page-wrapping
-call in both branches rather than compute a value once.
+call in both branches rather than compute a value once. Interpreter-only
+— the bytecode VM rejects the expression form explicitly, same shape
+as closures. See
+`docs/milestones/37-conditional-expressions/SPEC.md`.
 
 ## 38 — Missing comparison and logical operators
 

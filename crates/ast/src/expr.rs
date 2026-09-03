@@ -48,6 +48,20 @@ pub enum ExprKind {
         return_type: Type,
         body: Block,
     },
+    /// `if condition { then_value } else { else_value }` used as a
+    /// value (milestone 37) — deliberately distinct from `StmtKind::If`
+    /// rather than reusing it: each branch is exactly one expression,
+    /// not a `Block` of statements, and `else` is required, not
+    /// optional, since both branches must produce a value. `else if`
+    /// is parser-level sugar with no AST footprint of its own — the
+    /// parser recurses directly into another `ExprKind::If` for
+    /// `else_value` instead of requiring `{ }` around it. See
+    /// `docs/milestones/37-conditional-expressions/SPEC.md`.
+    If {
+        condition: Box<Expr>,
+        then_value: Box<Expr>,
+        else_value: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

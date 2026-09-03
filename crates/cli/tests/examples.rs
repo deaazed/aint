@@ -194,6 +194,43 @@ fn closures_an_test_block_passes() {
     assert!(stdout.contains("1 run, 1 passed, 0 failed"));
 }
 
+/// `examples/conditional_expressions.an` uses `if`/`else` as a value
+/// (milestone 37) - like a lambda, the VM's deterministic core doesn't
+/// support it yet, so lowering rejects it outright, before the VM
+/// compiler even runs. The example's *statement*-form `else if`
+/// (`grade`) would run under the VM on its own; it's the expression
+/// form (`sign`) elsewhere in the same file that fails the whole
+/// program's lowering.
+#[test]
+fn a_program_using_if_expressions_fails_clearly_under_the_vm() {
+    let output = run_aint_vm(&example_path("conditional_expressions.an"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("UnsupportedIfExpr"),
+        "expected a clear unsupported-if-expression message, got: {stderr}"
+    );
+}
+
+#[test]
+fn conditional_expressions_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("conditional_expressions.an"));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "negative\nzero\npositive\nF\nB\nA\nyes\n"
+    );
+}
+
+#[test]
+fn conditional_expressions_an_test_block_passes() {
+    let output = test_aint(&example_path("conditional_expressions.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 run, 1 passed, 0 failed"));
+}
+
 #[test]
 fn async_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("async.an"));

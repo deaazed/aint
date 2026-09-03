@@ -1,0 +1,47 @@
+// `if`/`else` as an expression, and `else if` as sugar for
+// `else { if ... }` (milestone 37) — both forms, statement and
+// expression. `sign` uses the new expression form (`else if` chained
+// all the way through, no nested blocks); `grade` shows the same
+// `else if` sugar applied to the existing statement form.
+fn sign(n: Int) -> String {
+    return if n < 0 { "negative" } else if n == 0 { "zero" } else { "positive" }
+}
+
+fn grade(score: Int) -> String {
+    if score < 60 {
+        return "F"
+    } else if score < 70 {
+        return "D"
+    } else if score < 80 {
+        return "C"
+    } else if score < 90 {
+        return "B"
+    } else {
+        return "A"
+    }
+}
+
+fn main() -> Unit {
+    print(sign(-3))
+    print(sign(0))
+    print(sign(7))
+
+    print(grade(55))
+    print(grade(82))
+    print(grade(95))
+
+    // Computing one of two values without duplicating the surrounding
+    // expression in each branch — the whole point of this milestone.
+    let label = if sign(4) == "positive" { "yes" } else { "no" }
+    print(label)
+}
+
+main()
+
+test "if-expressions and else-if chains agree with the equivalent nested if" {
+    assert sign(-1) == "negative"
+    assert sign(0) == "zero"
+    assert sign(1) == "positive"
+    assert grade(100) == "A"
+    assert grade(0) == "F"
+}

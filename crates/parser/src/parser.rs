@@ -337,6 +337,42 @@ impl Parser {
         ))
     }
 
+    /// `if condition { value } else { value }` in expression position
+    /// (milestone 37) — both branches are exactly one expression, and
+    /// `else` is required (unlike the statement form's optional
+    /// `else`), since both branches must produce a value. `else if`
+    /// recurses directly into another `parse_if_expr` instead of
+    /// requiring `{ }` around it, so a whole `else if` chain is one
+    /// flat `ExprKind::If` spine rather than nested `{ }`s.
+    fn parse_if_expr(&mut self) -> Result<Expr, ParseError> {
+        let if_token = self.expect(TokenKind::If, "`if`")?;
+        let condition = self.parse_expr()?;
+        self.expect(TokenKind::LeftBrace, "`{`")?;
+        let then_value = self.parse_expr()?;
+        self.expect(TokenKind::RightBrace, "`}`")?;
+        self.expect(
+            TokenKind::Else,
+            "`else` — an `if` used as a value needs both branches",
+        )?;
+        let else_value = if self.check(&TokenKind::If) {
+            self.parse_if_expr()?
+        } else {
+            self.expect(TokenKind::LeftBrace, "`{`")?;
+            let value = self.parse_expr()?;
+            self.expect(TokenKind::RightBrace, "`}`")?;
+            value
+        };
+        let span = Span::new(if_token.span.start, else_value.span.end);
+        Ok(Expr::new(
+            ExprKind::If {
+                condition: Box::new(condition),
+                then_value: Box::new(then_value),
+                else_value: Box::new(else_value),
+            },
+            span,
+        ))
+    }
+
     /// Parses an optional `effects [ Effect, Effect, ... ]` clause —
     /// `fn`/`async fn` only, see
     /// `docs/milestones/13-effects/SPEC.md` for why `infer`/`tool`
@@ -608,7 +644,21 @@ impl Parser {
         let condition = self.parse_expr()?;
         let then_branch = self.parse_block()?;
         let else_branch = if self.matches(&TokenKind::Else) {
-            Some(self.parse_block()?)
+            if self.check(&TokenKind::If) {
+                // `else if cond { ... }` — sugar for `else { if cond {
+                // ... } }`, applied here at parse time so the AST (and
+                // every crate downstream of it) never has to know the
+                // difference. Recursing into `parse_if_statement`
+                // handles an arbitrarily long `else if` chain for free.
+                let inner = self.parse_if_statement()?;
+                let inner_span = inner.span;
+                Some(Block {
+                    statements: vec![inner],
+                    span: inner_span,
+                })
+            } else {
+                Some(self.parse_block()?)
+            }
         } else {
             None
         };
@@ -812,6 +862,7 @@ impl Parser {
                 Ok(Expr::new(ExprKind::Identifier(name), token.span))
             }
             TokenKind::Fn => self.parse_lambda_expr(),
+            TokenKind::If => self.parse_if_expr(),
             TokenKind::LeftParen => {
                 self.advance();
                 let expr = self.parse_expr()?;
@@ -892,6 +943,16 @@ mod tests {
                 let names: Vec<&str> = params.iter().map(|p| p.name.as_str()).collect();
                 format!("(lambda ({}))", names.join(" "))
             }
+            ExprKind::If {
+                condition,
+                then_value,
+                else_value,
+            } => format!(
+                "(if {} {} {})",
+                describe_expr(condition),
+                describe_expr(then_value),
+                describe_expr(else_value)
+            ),
         }
     }
 
@@ -1544,6 +1605,52 @@ mod tests {
                 other => panic!("expected Lambda, got {other:?}"),
             },
             other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn if_expression_parses_as_a_value() {
+        let stmt = parse_one_stmt("let x = if a { 1 } else { 2 }");
+        match stmt.kind {
+            StmtKind::Let { value, .. } => {
+                assert_eq!(describe_expr(&value), "(if a 1 2)");
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn else_if_expression_chains_without_extra_nesting_in_source() {
+        let stmt = parse_one_stmt("let x = if a { 1 } else if b { 2 } else { 3 }");
+        match stmt.kind {
+            StmtKind::Let { value, .. } => {
+                assert_eq!(describe_expr(&value), "(if a 1 (if b 2 3))");
+            }
+            other => panic!("expected Let, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn if_expression_without_an_else_is_a_parse_error() {
+        let err = parse_source("let x = if a { 1 }").expect_err("should require else");
+        assert!(matches!(err, ParseError::Unexpected { .. }));
+    }
+
+    #[test]
+    fn else_if_statement_desugars_to_a_nested_if_statement() {
+        let stmt = parse_one_stmt("if a { assert a } else if b { assert b } else { assert a }");
+        match stmt.kind {
+            StmtKind::If { else_branch, .. } => {
+                let else_branch = else_branch.expect("should have an else branch");
+                match else_branch.statements.as_slice() {
+                    [Stmt {
+                        kind: StmtKind::If { .. },
+                        ..
+                    }] => {}
+                    other => panic!("expected a single nested If statement, got {other:?}"),
+                }
+            }
+            other => panic!("expected If, got {other:?}"),
         }
     }
 
