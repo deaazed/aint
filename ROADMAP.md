@@ -366,6 +366,24 @@ to an older release, in the exact window between a tag being pushed
 and its release workflow finishing. See
 `docs/milestones/42-self-upgrade/SPEC.md`.
 
+## Looking ahead — an HTML abstraction (not yet scoped)
+
+Named directly by the project owner, not yet a milestone: AINT
+programs that render web pages should express *AINT*, not hand-nested
+HTML strings — the retrospective behind Phase 3 already named this as
+the single biggest remaining source of boilerplate (`aint-website`'s
+`layout.an` alone is a 25-item `join_lines` list just for `<head>`).
+Milestones 37 (conditional expressions) and 39 (`string_replace`)
+each chipped at pieces of that pain without addressing the core of it:
+building markup is still string concatenation with extra steps. A real
+fix — some templating primitive, or a typed way to build markup that
+isn't just deeper `string_concat` nesting — is real, separate design
+work, deliberately deferred rather than designed here in passing. When
+it's taken up, it should get the same treatment every other milestone
+in this document did: a `SPEC.md` weighing the actual options (a
+literal templating syntax? a builder-style stdlib? something else
+entirely?) against real call sites, not decided in the abstract.
+
 ---
 
 ## Known hard problems, by category
