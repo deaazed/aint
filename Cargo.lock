@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aint"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-fmt",
@@ -25,11 +25,11 @@ dependencies = [
 
 [[package]]
 name = "aint-ast"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "aint-fmt"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-parser",
@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "aint-ir"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-parser",
@@ -46,14 +46,14 @@ dependencies = [
 
 [[package]]
 name = "aint-lexer"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
 ]
 
 [[package]]
 name = "aint-loader"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-package",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "aint-package"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "toml",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "aint-parser"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-lexer",
@@ -78,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "aint-runtime"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-parser",
@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "aint-typechecker"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-parser",
@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "aint-vm"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "aint-ast",
  "aint-ir",

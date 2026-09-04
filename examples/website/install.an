@@ -44,7 +44,7 @@ fn powershell_lines() -> String {
 fn verify_shell_lines() -> String {
     return join_lines([
         "aint --version",
-        "<span class=\"cm\"># aint 0.3.0</span>"
+        "<span class=\"cm\"># aint 0.4.0</span>"
     ], 0)
 }
 
