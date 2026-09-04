@@ -65,11 +65,13 @@ no automatic/background upgrading, no fleet-wide upgrade mechanism.
   `aint.toml` toolchain-version field. Neither is needed yet — nothing
   through v0.2.0 has ever broken an existing program. Real, separate,
   additive work if that ever changes.
-- **The very first upgrade for anyone still on v0.1.1 (pre-milestone-
-  42) has to be a manual reinstall** (`install.sh`/`install.ps1`) —
-  `aint upgrade` can only upgrade a binary that already has it. Every
-  release from `v0.2.0` onward can use `aint upgrade` itself from
-  there.
+- **The very first upgrade for anyone on v0.2.0 or earlier (this
+  milestone's own command didn't exist in that release — it was built
+  and tagged separately, after v0.2.0 had already shipped) has to be a
+  manual reinstall** (`install.sh`/`install.ps1`) — `aint upgrade` can
+  only upgrade a binary that already has it. `v0.3.0` is the first
+  release that actually contains it; every release from there onward
+  can use `aint upgrade` itself.
 
 ## Explicitly out of scope
 
