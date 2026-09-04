@@ -121,6 +121,10 @@ Both install to `~/.aint/bin` (`%USERPROFILE%\.aint\bin` on Windows)
 and tell you if that isn't already on `PATH`. Verify with
 `aint --version`.
 
+Already have `aint`? `aint upgrade` replaces it in place with the
+latest release — `aint upgrade --check` just reports whether one's
+available. Never automatic; only ever runs when you ask.
+
 ## Building from source
 
 For contributing, or a platform the installer doesn't cover yet.

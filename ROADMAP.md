@@ -349,6 +349,23 @@ exactly the kind of first-run friction that decides whether someone
 gets a live demo working at all. The last of Phase 3's five
 milestones. See `docs/milestones/41-dotenv/SPEC.md`.
 
+## 42 — `aint upgrade` — done
+
+Getting `aint` has meant re-running `install.sh`/`install.ps1` by hand
+since milestone 35 — no way to upgrade an existing install except
+fetching the whole script again. `aint upgrade` replaces the running
+binary with the latest GitHub Release build in place; `--check`
+reports without installing. Deliberately pull-based and manual only —
+no telemetry, no automatic or fleet-wide upgrading, the same model
+`rustup`/`deno`/`bun` all use. Verified against the real, live release
+infrastructure: a genuine old binary really downloaded, extracted, and
+replaced itself with the real published `v0.2.0`. That same real
+verification caught a real bug before it shipped — an equality-only
+version check would have offered to "upgrade" a newer dev build down
+to an older release, in the exact window between a tag being pushed
+and its release workflow finishing. See
+`docs/milestones/42-self-upgrade/SPEC.md`.
+
 ---
 
 ## Known hard problems, by category

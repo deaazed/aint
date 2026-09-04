@@ -104,6 +104,19 @@ enum Command {
         /// Directory to create the new package in.
         path: PathBuf,
     },
+    /// Replaces the running `aint` with the latest GitHub Release
+    /// build, if one is newer (milestone 42) — the same download
+    /// `install.sh`/`install.ps1` do, just able to replace itself
+    /// in place instead of being fetched fresh each time. Never
+    /// silent or automatic: this only ever runs when explicitly
+    /// invoked.
+    Upgrade {
+        /// Report whether a newer version is available without
+        /// installing it. Exits non-zero if one is (the same
+        /// CI-friendly convention `aint fmt --check` uses).
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// AINT's only iteration mechanism is recursion — there are no loops —
@@ -130,6 +143,7 @@ fn main() -> ExitCode {
             Command::Check { path } => check(&path),
             Command::Fmt { path, check } => fmt(&path, check),
             Command::Scaffold { description, path } => scaffold(&description, &path),
+            Command::Upgrade { check } => upgrade(check),
         })
         .expect("failed to spawn the interpreter thread")
         .join()
@@ -642,6 +656,244 @@ fn scaffold(description: &str, path: &Path) -> ExitCode {
     }
 }
 
+const RELEASE_REPO: &str = "deaazed/aint";
+
+/// `aint upgrade` (milestone 42). Never runs on its own — only when
+/// explicitly invoked — and never touches anything but the running
+/// binary itself.
+fn upgrade(check_only: bool) -> ExitCode {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let client = match reqwest::blocking::Client::builder()
+        .user_agent(format!("aint-upgrade/{current}"))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => {
+            eprintln!("error: could not build an HTTP client: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let tag = match fetch_latest_tag(&client) {
+        Ok(tag) => tag,
+        Err(err) => {
+            eprintln!("error: could not check the latest release: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let latest = tag.strip_prefix('v').unwrap_or(&tag);
+
+    // Not just an equality check: a dev build (or one running between
+    // this tag's push and its release workflow actually finishing —
+    // `releases/latest` still reports the *previous* tag until then)
+    // can genuinely be ahead of the last published release. Only ever
+    // "upgrade" to something that actually compares newer, falling
+    // back to plain inequality if either version doesn't parse as
+    // three dot-separated numbers (never expected in practice, but
+    // safer than assuming the shape).
+    let is_newer = match (parse_semver(current), parse_semver(latest)) {
+        (Some(cur), Some(lat)) => lat > cur,
+        _ => latest != current,
+    };
+    if !is_newer {
+        println!("aint {current} is already the latest version");
+        return ExitCode::SUCCESS;
+    }
+
+    if check_only {
+        println!("aint {current} -> {latest} is available (run `aint upgrade` to install it)");
+        return ExitCode::FAILURE;
+    }
+
+    let Some(asset) = platform_asset() else {
+        eprintln!(
+            "error: no prebuilt aint for this platform — build from source instead: https://github.com/{RELEASE_REPO}#building-from-source"
+        );
+        return ExitCode::FAILURE;
+    };
+
+    println!("upgrading aint {current} -> {latest}...");
+    match download_and_replace(&client, &tag, asset) {
+        Ok(()) => {
+            println!("upgraded to aint {latest}");
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Parses a plain `major.minor.patch` version string (no pre-release
+/// or build-metadata suffix — `aint` has never used either) into
+/// comparable integers. Small and local rather than pulling in the
+/// `semver` crate for one comparison.
+fn parse_semver(v: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = v.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn fetch_latest_tag(client: &reqwest::blocking::Client) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Release {
+        tag_name: String,
+    }
+    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases/latest");
+    let release: Release = client
+        .get(&url)
+        .send()
+        .map_err(|err| format!("request to {url} failed: {err}"))?
+        .error_for_status()
+        .map_err(|err| format!("{url} responded with an error: {err}"))?
+        .json()
+        .map_err(|err| format!("could not parse the response from {url}: {err}"))?;
+    Ok(release.tag_name)
+}
+
+/// Mirrors `install.sh`/`install.ps1`'s own OS/arch detection and
+/// asset naming exactly — `None` for a platform neither script covers
+/// (Linux/aarch64, or anything that isn't Linux/macOS/Windows).
+fn platform_asset() -> Option<&'static str> {
+    platform_asset_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn platform_asset_for(os: &str, arch: &str) -> Option<&'static str> {
+    match (os, arch) {
+        ("windows", "x86_64") => Some("aint-windows-x86_64"),
+        ("macos", "x86_64") => Some("aint-macos-x86_64"),
+        ("macos", "aarch64") => Some("aint-macos-aarch64"),
+        ("linux", "x86_64") => Some("aint-linux-x86_64"),
+        _ => None,
+    }
+}
+
+fn archive_extension() -> &'static str {
+    if cfg!(windows) {
+        "zip"
+    } else {
+        "tar.gz"
+    }
+}
+
+fn download_and_replace(
+    client: &reqwest::blocking::Client,
+    tag: &str,
+    asset: &str,
+) -> Result<(), String> {
+    let ext = archive_extension();
+    let url = format!("https://github.com/{RELEASE_REPO}/releases/download/{tag}/{asset}.{ext}");
+    let bytes = client
+        .get(&url)
+        .send()
+        .map_err(|err| format!("request to {url} failed: {err}"))?
+        .error_for_status()
+        .map_err(|err| format!("{url} responded with an error: {err}"))?
+        .bytes()
+        .map_err(|err| format!("could not read the downloaded archive: {err}"))?;
+
+    let tmp_dir = std::env::temp_dir().join(format!("aint-upgrade-{}", std::process::id()));
+    fs::create_dir_all(&tmp_dir)
+        .map_err(|err| format!("could not create a temp directory: {err}"))?;
+    let archive_path = tmp_dir.join(format!("{asset}.{ext}"));
+    fs::write(&archive_path, &bytes)
+        .map_err(|err| format!("could not write {}: {err}", archive_path.display()))?;
+
+    let result = extract_binary(&archive_path, &tmp_dir)
+        .and_then(|new_binary| replace_running_binary(&new_binary));
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+    result
+}
+
+/// Shells out to whatever this platform's own install script already
+/// assumes is present (`tar` on Unix, PowerShell's `Expand-Archive` on
+/// Windows) rather than adding an archive-extraction dependency for
+/// one command.
+fn extract_binary(archive_path: &Path, dest_dir: &Path) -> Result<PathBuf, String> {
+    if cfg!(windows) {
+        let script = format!(
+            "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+            archive_path.display(),
+            dest_dir.display()
+        );
+        let status = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &script])
+            .status()
+            .map_err(|err| format!("could not run powershell: {err}"))?;
+        if !status.success() {
+            return Err(format!(
+                "Expand-Archive of {} failed",
+                archive_path.display()
+            ));
+        }
+        Ok(dest_dir.join("aint.exe"))
+    } else {
+        let status = std::process::Command::new("tar")
+            .arg("-xzf")
+            .arg(archive_path)
+            .arg("-C")
+            .arg(dest_dir)
+            .status()
+            .map_err(|err| format!("could not run tar: {err}"))?;
+        if !status.success() {
+            return Err(format!("tar could not extract {}", archive_path.display()));
+        }
+        Ok(dest_dir.join("aint"))
+    }
+}
+
+/// Replaces the currently-running executable with `new_binary`.
+/// Neither OS allows overwriting a running process's own file
+/// directly, but both allow *renaming* it — the running process keeps
+/// its open handle to the underlying file regardless of what it's
+/// currently called, on Unix and Windows alike.
+fn replace_running_binary(new_binary: &Path) -> Result<(), String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|err| format!("could not determine the running binary's own path: {err}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(new_binary)
+            .map_err(|err| format!("could not read {}: {err}", new_binary.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(new_binary, perms)
+            .map_err(|err| format!("could not make {} executable: {err}", new_binary.display()))?;
+        fs::rename(new_binary, &current_exe)
+            .map_err(|err| format!("could not replace {}: {err}", current_exe.display()))?;
+    }
+
+    #[cfg(windows)]
+    {
+        // Move the running binary aside first, then move the new one
+        // into the name it vacated. A leftover `.old` file from an
+        // interrupted previous upgrade is removed first, best-effort;
+        // the final cleanup is best-effort too, since Windows may
+        // still hold this process's own now-renamed-away file open
+        // until it exits.
+        let old_path = current_exe.with_extension("exe.old");
+        let _ = fs::remove_file(&old_path);
+        fs::rename(&current_exe, &old_path)
+            .map_err(|err| format!("could not move aside the running binary: {err}"))?;
+        if let Err(err) = fs::rename(new_binary, &current_exe) {
+            let _ = fs::rename(&old_path, &current_exe);
+            return Err(format!("could not install the new binary: {err}"));
+        }
+        let _ = fs::remove_file(&old_path);
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,5 +982,56 @@ mod tests {
     #[test]
     fn parse_dotenv_on_empty_text_yields_nothing() {
         assert_eq!(parse_dotenv(""), Vec::<(String, String)>::new());
+    }
+
+    #[test]
+    fn parse_semver_reads_major_minor_patch() {
+        assert_eq!(parse_semver("0.2.0"), Some((0, 2, 0)));
+        assert_eq!(parse_semver("12.34.56"), Some((12, 34, 56)));
+    }
+
+    #[test]
+    fn parse_semver_rejects_anything_else() {
+        assert_eq!(parse_semver("0.2"), None);
+        assert_eq!(parse_semver("0.2.0-beta"), None);
+        assert_eq!(parse_semver("0.2.0.1"), None);
+        assert_eq!(parse_semver("not a version"), None);
+    }
+
+    #[test]
+    fn parse_semver_orders_correctly() {
+        assert!(parse_semver("0.2.0") > parse_semver("0.1.9"));
+        assert!(parse_semver("1.0.0") > parse_semver("0.99.99"));
+        assert!(parse_semver("0.2.1") > parse_semver("0.2.0"));
+        assert_eq!(parse_semver("0.2.0"), parse_semver("0.2.0"));
+    }
+
+    #[test]
+    fn platform_asset_names_match_install_sh_and_install_ps1_exactly() {
+        // The install scripts are the source of truth for these
+        // names - this just guards against the two drifting apart.
+        assert_eq!(
+            platform_asset_for("windows", "x86_64"),
+            Some("aint-windows-x86_64")
+        );
+        assert_eq!(
+            platform_asset_for("macos", "x86_64"),
+            Some("aint-macos-x86_64")
+        );
+        assert_eq!(
+            platform_asset_for("macos", "aarch64"),
+            Some("aint-macos-aarch64")
+        );
+        assert_eq!(
+            platform_asset_for("linux", "x86_64"),
+            Some("aint-linux-x86_64")
+        );
+    }
+
+    #[test]
+    fn platform_asset_is_none_for_an_uncovered_platform() {
+        // Matches install.sh's own explicit linux/aarch64 rejection.
+        assert_eq!(platform_asset_for("linux", "aarch64"), None);
+        assert_eq!(platform_asset_for("freebsd", "x86_64"), None);
     }
 }

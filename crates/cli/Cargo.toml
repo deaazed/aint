@@ -23,3 +23,10 @@ aint-loader = { path = "../loader" }
 aint-fmt = { path = "../fmt" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
+# Backs `aint upgrade` only (milestone 42) - the same version/features
+# `aint-runtime`'s `HttpModel` already pulls in, so this adds no new
+# dependency to the graph, just a second, blocking use of one already
+# there. `blocking` spins up its own internal runtime, so `upgrade()`
+# needs no `tokio::runtime::Runtime` of its own the way `run`/`test` do.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
+serde = { version = "1", features = ["derive"] }
