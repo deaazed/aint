@@ -30,3 +30,10 @@ tokio = { version = "1", features = ["full"] }
 # needs no `tokio::runtime::Runtime` of its own the way `run`/`test` do.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
 serde = { version = "1", features = ["derive"] }
+# Backs the CLI's own colored, verbose output (milestone 43) - both
+# already sit in the dependency graph regardless, via clap's own
+# `--help` coloring, so this adds nothing new to build. `anstream`
+# auto-detects a non-terminal destination (a pipe, a file, `NO_COLOR`)
+# and strips ANSI codes itself - callers never need to check for that.
+anstream = "1"
+anstyle = "1"

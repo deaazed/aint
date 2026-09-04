@@ -60,6 +60,30 @@ fn hello_an_prints_and_exits_zero() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "Hello, AINT!\n");
 }
 
+/// `aint run` narrates what it's doing on stderr (milestone 43) — the
+/// program's own stdout output stays exactly what it was (proven by
+/// every exact-stdout-match test in this file continuing to pass
+/// unchanged), and none of it carries a raw ANSI escape byte when
+/// captured through a pipe the way this test (and any real shell
+/// piping `aint run`'s output onward) does — `anstream` strips color
+/// on its own once it detects the destination isn't a real terminal.
+#[test]
+fn aint_run_narrates_on_stderr_with_no_escape_codes_in_a_pipe() {
+    let output = run_aint(&example_path("hello.an"));
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("checking"), "stderr: {stderr}");
+    assert!(stderr.contains("running"), "stderr: {stderr}");
+    assert!(
+        !output.stderr.contains(&0x1b),
+        "stderr carried a raw ANSI escape byte: {stderr:?}"
+    );
+    assert!(
+        !output.stdout.contains(&0x1b),
+        "stdout carried a raw ANSI escape byte"
+    );
+}
+
 #[test]
 fn fibonacci_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("fibonacci.an"));
@@ -517,11 +541,16 @@ fn aint_test_reports_a_failing_assertion_and_exits_nonzero() {
 }
 
 /// `aint check` (milestone 24): exactly `parse_and_check`'s gate.
+/// Silent on success on *both* streams (milestone 43 made every other
+/// command more verbose specifically without touching this contract —
+/// `gofmt -l`/`tsc --noEmit`'s convention that scripts and CI can rely
+/// on empty output meaning "fine").
 #[test]
 fn check_accepts_a_well_typed_program_silently() {
     let output = check_aint(&example_path("showcase.an"));
     assert!(output.status.success());
     assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 #[test]
@@ -539,6 +568,24 @@ fn check_rejects_an_ill_typed_program_clearly() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("argument"));
+}
+
+/// `aint fmt --check` on an already-formatted file: silent on success
+/// on both streams, same contract as `aint check` (milestone 43
+/// deliberately never touches this — see that milestone's own module
+/// doc comment in `main.rs`).
+#[test]
+fn fmt_check_is_silent_when_already_formatted() {
+    let path =
+        std::env::temp_dir().join(format!("aint_cli_fmt_check_ok_{}.an", std::process::id()));
+    std::fs::write(&path, "print(1)\n").expect("failed to write a temporary .an file");
+
+    let output = fmt_aint(&["--check", path.to_str().expect("temp path should be utf8")]);
+    std::fs::remove_file(&path).ok();
+
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
 }
 
 /// `aint fmt --check` (milestone 24): reports, doesn't write.

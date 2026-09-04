@@ -9,6 +9,17 @@
 //! in a file, each in its own fresh, isolated `Interpreter` configured
 //! from that block's own `mock` statements — see
 //! `docs/milestones/15-deterministic-ai-testing/SPEC.md`.
+//!
+//! **Output (milestone 43)**: every command narrates what it's doing
+//! — `==>` for a step about to run, `[ok]`/green for success, red for
+//! an error — through `anstream`, which auto-detects a non-terminal
+//! destination (a pipe, a file, `NO_COLOR` set) and strips the ANSI
+//! codes itself, so piped/captured output is unaffected either way.
+//! Two commands are the deliberate exception: `aint check` and
+//! `aint fmt --check` stay completely silent on success, matching
+//! `gofmt -l`/`tsc --noEmit`'s convention that scripts and CI can rely
+//! on — see `ui::step`'s own doc comment for why that's enforced by
+//! never calling it from either success path, not by a flag.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,6 +27,9 @@ use std::process::ExitCode;
 
 use aint_ast::Program;
 use clap::{Parser, Subcommand};
+
+mod ui;
+use ui::{error_line, fail_line, ok_line, step, warn_line};
 
 #[derive(Parser)]
 #[command(
@@ -208,12 +222,12 @@ fn parse_dotenv(text: &str) -> Vec<(String, String)> {
 /// reaches into one flat `Program` before the type checker ever sees it.
 fn parse_and_check(path: &Path) -> Result<Program, ExitCode> {
     let program = aint_loader::load(path).map_err(|err| {
-        eprintln!("error: {err}");
+        error_line(format!("error: {err}"));
         ExitCode::FAILURE
     })?;
 
     aint_typechecker::check_program(&program).map_err(|err| {
-        eprintln!("{}:{}", path.display(), err);
+        error_line(format!("{}:{}", path.display(), err));
         ExitCode::FAILURE
     })?;
 
@@ -237,7 +251,7 @@ fn fmt(path: &Path, check_only: bool) -> ExitCode {
     let source = match fs::read_to_string(path) {
         Ok(source) => source,
         Err(err) => {
-            eprintln!("error: could not read {}: {err}", path.display());
+            error_line(format!("error: could not read {}: {err}", path.display()));
             return ExitCode::FAILURE;
         }
     };
@@ -245,26 +259,33 @@ fn fmt(path: &Path, check_only: bool) -> ExitCode {
     let formatted = match aint_fmt::format(&source) {
         Ok(formatted) => formatted,
         Err(err) => {
-            eprintln!("{}: {err}", path.display());
+            error_line(format!("{}: {err}", path.display()));
             return ExitCode::FAILURE;
         }
     };
 
     if check_only {
+        // Silent on success, on purpose — matching `rustfmt --check`'s
+        // CI-friendly convention that scripts can rely on empty output
+        // meaning "already formatted." Never call `step`/`ok_line`
+        // here; see main.rs's own module doc comment.
         if formatted == source {
             ExitCode::SUCCESS
         } else {
-            println!("{}", path.display());
+            warn_line(format!("{} is not formatted", path.display()));
             ExitCode::FAILURE
         }
+    } else if formatted == source {
+        ok_line(format!("{} is already formatted", path.display()));
+        ExitCode::SUCCESS
     } else {
-        if formatted == source {
-            return ExitCode::SUCCESS;
-        }
         match fs::write(path, formatted) {
-            Ok(()) => ExitCode::SUCCESS,
+            Ok(()) => {
+                ok_line(format!("formatted {}", path.display()));
+                ExitCode::SUCCESS
+            }
             Err(err) => {
-                eprintln!("error: could not write {}: {err}", path.display());
+                error_line(format!("error: could not write {}: {err}", path.display()));
                 ExitCode::FAILURE
             }
         }
@@ -276,12 +297,13 @@ fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
         .enable_all()
         .build()
         .map_err(|err| {
-            eprintln!("error: could not start the async runtime: {err}");
+            error_line(format!("error: could not start the async runtime: {err}"));
             ExitCode::FAILURE
         })
 }
 
 fn run(path: &Path) -> ExitCode {
+    step(format!("checking {}", path.display()));
     let program = match parse_and_check(path) {
         Ok(program) => program,
         Err(code) => return code,
@@ -299,6 +321,8 @@ fn run(path: &Path) -> ExitCode {
     // still have no real backend regardless — `MockTool` is the only
     // one that's ever existed; see
     // docs/milestones/25-real-application/SPEC.md.
+    step(format!("running {}", path.display()));
+    let start = std::time::Instant::now();
     match std::env::var("AINT_MODEL_URL") {
         Ok(url) => {
             let model_name =
@@ -310,9 +334,12 @@ fn run(path: &Path) -> ExitCode {
             let interpreter =
                 aint_runtime::Interpreter::with_output_and_model(std::io::stdout(), model);
             match runtime.block_on(interpreter.run(&program)) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => {
+                    step(format!("finished in {:?}", start.elapsed()));
+                    ExitCode::SUCCESS
+                }
                 Err(err) => {
-                    eprintln!("{}:{}", path.display(), err);
+                    error_line(format!("{}:{}", path.display(), err));
                     ExitCode::FAILURE
                 }
             }
@@ -320,9 +347,12 @@ fn run(path: &Path) -> ExitCode {
         Err(_) => {
             let interpreter = aint_runtime::Interpreter::new();
             match runtime.block_on(interpreter.run(&program)) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => {
+                    step(format!("finished in {:?}", start.elapsed()));
+                    ExitCode::SUCCESS
+                }
                 Err(err) => {
-                    eprintln!("{}:{}", path.display(), err);
+                    error_line(format!("{}:{}", path.display(), err));
                     ExitCode::FAILURE
                 }
             }
@@ -337,15 +367,17 @@ fn run(path: &Path) -> ExitCode {
 /// `docs/milestones/22-bytecode-vm/SPEC.md` for exactly what's
 /// covered and what fails clearly instead of running.
 fn run_vm(path: &Path) -> ExitCode {
+    step(format!("checking {}", path.display()));
     let program = match parse_and_check(path) {
         Ok(program) => program,
         Err(code) => return code,
     };
 
+    step("compiling to bytecode");
     let air = match aint_ir::lower(&program) {
         Ok(air) => air,
         Err(err) => {
-            eprintln!("{}: {err:?}", path.display());
+            error_line(format!("{}: {err:?}", path.display()));
             return ExitCode::FAILURE;
         }
     };
@@ -353,22 +385,28 @@ fn run_vm(path: &Path) -> ExitCode {
     let compiled = match aint_vm::compile(&air) {
         Ok(compiled) => compiled,
         Err(err) => {
-            eprintln!("{}: {err}", path.display());
+            error_line(format!("{}: {err}", path.display()));
             return ExitCode::FAILURE;
         }
     };
 
+    step(format!("running {} via the bytecode VM", path.display()));
+    let start = std::time::Instant::now();
     let mut vm = aint_vm::Vm::new(std::io::stdout());
     match vm.run(&compiled) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(()) => {
+            step(format!("finished in {:?}", start.elapsed()));
+            ExitCode::SUCCESS
+        }
         Err(err) => {
-            eprintln!("{}:{}", path.display(), err);
+            error_line(format!("{}:{}", path.display(), err));
             ExitCode::FAILURE
         }
     }
 }
 
 fn test(path: &Path) -> ExitCode {
+    step(format!("checking {}", path.display()));
     let program = match parse_and_check(path) {
         Ok(program) => program,
         Err(code) => return code,
@@ -378,31 +416,33 @@ fn test(path: &Path) -> ExitCode {
         Err(code) => return code,
     };
 
+    step(format!("testing {}", path.display()));
     let outcomes = runtime.block_on(aint_runtime::run_tests(&program));
     if outcomes.is_empty() {
-        println!("no test blocks found in {}", path.display());
+        ok_line(format!("no test blocks found in {}", path.display()));
         return ExitCode::SUCCESS;
     }
 
     let mut failed = 0usize;
     for outcome in &outcomes {
         match &outcome.result {
-            Ok(()) => println!("test \"{}\" ... ok", outcome.name),
+            Ok(()) => ok_line(format!("test \"{}\" ... ok", outcome.name)),
             Err(err) => {
                 failed += 1;
-                println!("test \"{}\" ... FAILED", outcome.name);
-                println!("  {}:{err}", path.display());
+                fail_line(format!("test \"{}\" ... FAILED", outcome.name));
+                fail_line(format!("  {}:{err}", path.display()));
             }
         }
     }
 
     let passed = outcomes.len() - failed;
     println!();
-    println!("{} run, {passed} passed, {failed} failed", outcomes.len());
-
+    let summary = format!("{} run, {passed} passed, {failed} failed", outcomes.len());
     if failed == 0 {
+        ok_line(summary);
         ExitCode::SUCCESS
     } else {
+        fail_line(summary);
         ExitCode::FAILURE
     }
 }
@@ -411,14 +451,15 @@ fn test(path: &Path) -> ExitCode {
 /// starter `<path>/main.an`. Refuses to overwrite an existing
 /// manifest — this creates a new package, it doesn't reset one.
 fn init(path: &Path) -> ExitCode {
+    step(format!("creating a package at {}", path.display()));
     if let Err(err) = fs::create_dir_all(path) {
-        eprintln!("error: could not create {}: {err}", path.display());
+        error_line(format!("error: could not create {}: {err}", path.display()));
         return ExitCode::FAILURE;
     }
 
     let manifest_path = path.join(aint_package::MANIFEST_FILE_NAME);
     if manifest_path.exists() {
-        eprintln!("error: {} already exists", manifest_path.display());
+        error_line(format!("error: {} already exists", manifest_path.display()));
         return ExitCode::FAILURE;
     }
 
@@ -430,19 +471,22 @@ fn init(path: &Path) -> ExitCode {
 
     let manifest = aint_package::Manifest::new(name, "0.1.0");
     if let Err(err) = manifest.write_to_dir(path) {
-        eprintln!("error: {err}");
+        error_line(format!("error: {err}"));
         return ExitCode::FAILURE;
     }
 
     let main_an = path.join("main.an");
     if !main_an.exists() {
         if let Err(err) = fs::write(&main_an, "print(\"Hello, AINT!\")\n") {
-            eprintln!("error: could not write {}: {err}", main_an.display());
+            error_line(format!(
+                "error: could not write {}: {err}",
+                main_an.display()
+            ));
             return ExitCode::FAILURE;
         }
     }
 
-    println!("created {}", manifest_path.display());
+    ok_line(format!("created {}", manifest_path.display()));
     ExitCode::SUCCESS
 }
 
@@ -460,7 +504,9 @@ fn add(path: Option<PathBuf>, git: Option<String>, rev: Option<String>) -> ExitC
     let cwd = match std::env::current_dir() {
         Ok(dir) => dir,
         Err(err) => {
-            eprintln!("error: could not determine the current directory: {err}");
+            error_line(format!(
+                "error: could not determine the current directory: {err}"
+            ));
             return ExitCode::FAILURE;
         }
     };
@@ -468,23 +514,24 @@ fn add(path: Option<PathBuf>, git: Option<String>, rev: Option<String>) -> ExitC
     let mut manifest = match aint_package::Manifest::read_from_dir(&cwd) {
         Ok(manifest) => manifest,
         Err(err) => {
-            eprintln!("error: {err} — run `aint init` first?");
+            error_line(format!("error: {err} — run `aint init` first?"));
             return ExitCode::FAILURE;
         }
     };
 
     let (name, dependency, source_description) = if let Some(url) = git {
+        step(format!("cloning {url}"));
         let (dep_dir, _source) = match aint_package::materialize_git(&url, rev.as_deref()) {
             Ok(result) => result,
             Err(err) => {
-                eprintln!("error: {err}");
+                error_line(format!("error: {err}"));
                 return ExitCode::FAILURE;
             }
         };
         let dep_manifest = match aint_package::Manifest::read_from_dir(&dep_dir) {
             Ok(manifest) => manifest,
             Err(err) => {
-                eprintln!("error: {err}");
+                error_line(format!("error: {err}"));
                 return ExitCode::FAILURE;
             }
         };
@@ -498,7 +545,7 @@ fn add(path: Option<PathBuf>, git: Option<String>, rev: Option<String>) -> ExitC
         let dep_manifest = match aint_package::Manifest::read_from_dir(&dep_path) {
             Ok(manifest) => manifest,
             Err(err) => {
-                eprintln!("error: {err}");
+                error_line(format!("error: {err}"));
                 return ExitCode::FAILURE;
             }
         };
@@ -508,29 +555,30 @@ fn add(path: Option<PathBuf>, git: Option<String>, rev: Option<String>) -> ExitC
         };
         (name, dependency, format!("path: {}", dep_path.display()))
     } else {
-        eprintln!("error: `aint add` needs either a path or `--git <url>`");
+        error_line("error: `aint add` needs either a path or `--git <url>`");
         return ExitCode::FAILURE;
     };
 
     manifest.dependencies.insert(name.clone(), dependency);
     if let Err(err) = manifest.write_to_dir(&cwd) {
-        eprintln!("error: {err}");
+        error_line(format!("error: {err}"));
         return ExitCode::FAILURE;
     }
 
+    step("resolving the dependency graph");
     let lockfile = match aint_package::resolve(&cwd) {
         Ok(lockfile) => lockfile,
         Err(err) => {
-            eprintln!("error: {err}");
+            error_line(format!("error: {err}"));
             return ExitCode::FAILURE;
         }
     };
     if let Err(err) = lockfile.write_to_dir(&cwd) {
-        eprintln!("error: {err}");
+        error_line(format!("error: {err}"));
         return ExitCode::FAILURE;
     }
 
-    println!("added `{name}` ({source_description})");
+    ok_line(format!("added `{name}` ({source_description})"));
     ExitCode::SUCCESS
 }
 
@@ -590,14 +638,14 @@ fn scaffold(description: &str, path: &Path) -> ExitCode {
     let base_url = match std::env::var("AINT_MODEL_URL") {
         Ok(url) => url,
         Err(_) => {
-            eprintln!("error: aint scaffold requires AINT_MODEL_URL to be set");
+            error_line("error: aint scaffold requires AINT_MODEL_URL to be set");
             return ExitCode::FAILURE;
         }
     };
 
     let manifest_path = path.join(aint_package::MANIFEST_FILE_NAME);
     if manifest_path.exists() {
-        eprintln!("error: {} already exists", manifest_path.display());
+        error_line(format!("error: {} already exists", manifest_path.display()));
         return ExitCode::FAILURE;
     }
 
@@ -612,17 +660,18 @@ fn scaffold(description: &str, path: &Path) -> ExitCode {
         Err(code) => return code,
     };
 
+    step(format!("asking the model for: {description}"));
     let response = match runtime.block_on(client.complete(SCAFFOLD_SYSTEM_PROMPT, description)) {
         Ok(text) => text,
         Err(err) => {
-            eprintln!("error: {err}");
+            error_line(format!("error: {err}"));
             return ExitCode::FAILURE;
         }
     };
     let source = extract_source(&response);
 
     if let Err(err) = fs::create_dir_all(path) {
-        eprintln!("error: could not create {}: {err}", path.display());
+        error_line(format!("error: could not create {}: {err}", path.display()));
         return ExitCode::FAILURE;
     }
     let name = path
@@ -632,25 +681,32 @@ fn scaffold(description: &str, path: &Path) -> ExitCode {
         .unwrap_or_else(|| "my-project".to_string());
     let manifest = aint_package::Manifest::new(name, "0.1.0");
     if let Err(err) = manifest.write_to_dir(path) {
-        eprintln!("error: {err}");
+        error_line(format!("error: {err}"));
         return ExitCode::FAILURE;
     }
     let main_an = path.join("main.an");
     if let Err(err) = fs::write(&main_an, &source) {
-        eprintln!("error: could not write {}: {err}", main_an.display());
+        error_line(format!(
+            "error: could not write {}: {err}",
+            main_an.display()
+        ));
         return ExitCode::FAILURE;
     }
 
+    step(format!("checking {}", main_an.display()));
     match parse_and_check(&main_an) {
         Ok(_) => {
-            println!("created {} — type-checks cleanly", main_an.display());
+            ok_line(format!(
+                "created {} — type-checks cleanly",
+                main_an.display()
+            ));
             ExitCode::SUCCESS
         }
         Err(code) => {
-            eprintln!(
+            warn_line(format!(
                 "warning: the generated program at {} does not type-check — left on disk to inspect, not reported as done",
                 main_an.display()
-            );
+            ));
             code
         }
     }
@@ -670,15 +726,16 @@ fn upgrade(check_only: bool) -> ExitCode {
     {
         Ok(client) => client,
         Err(err) => {
-            eprintln!("error: could not build an HTTP client: {err}");
+            error_line(format!("error: could not build an HTTP client: {err}"));
             return ExitCode::FAILURE;
         }
     };
 
+    step("checking the latest release");
     let tag = match fetch_latest_tag(&client) {
         Ok(tag) => tag,
         Err(err) => {
-            eprintln!("error: could not check the latest release: {err}");
+            error_line(format!("error: could not check the latest release: {err}"));
             return ExitCode::FAILURE;
         }
     };
@@ -697,30 +754,32 @@ fn upgrade(check_only: bool) -> ExitCode {
         _ => latest != current,
     };
     if !is_newer {
-        println!("aint {current} is already the latest version");
+        ok_line(format!("aint {current} is already the latest version"));
         return ExitCode::SUCCESS;
     }
 
     if check_only {
-        println!("aint {current} -> {latest} is available (run `aint upgrade` to install it)");
+        warn_line(format!(
+            "aint {current} -> {latest} is available (run `aint upgrade` to install it)"
+        ));
         return ExitCode::FAILURE;
     }
 
     let Some(asset) = platform_asset() else {
-        eprintln!(
+        error_line(format!(
             "error: no prebuilt aint for this platform — build from source instead: https://github.com/{RELEASE_REPO}#building-from-source"
-        );
+        ));
         return ExitCode::FAILURE;
     };
 
-    println!("upgrading aint {current} -> {latest}...");
+    step(format!("downloading aint {latest} ({asset})"));
     match download_and_replace(&client, &tag, asset) {
         Ok(()) => {
-            println!("upgraded to aint {latest}");
+            ok_line(format!("upgraded aint {current} -> {latest}"));
             ExitCode::SUCCESS
         }
         Err(err) => {
-            eprintln!("error: {err}");
+            error_line(format!("error: {err}"));
             ExitCode::FAILURE
         }
     }

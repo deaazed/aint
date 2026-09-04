@@ -366,6 +366,26 @@ to an older release, in the exact window between a tag being pushed
 and its release workflow finishing. See
 `docs/milestones/42-self-upgrade/SPEC.md`.
 
+## 43 — Verbose, colored CLI output — done
+
+Every `aint` command was close to silent before this — a final
+one-line confirmation at most, nothing narrating what actually
+happened. Requested directly: more verbose, colored, plain-ASCII (no
+Unicode/emoji) output on every run. `aint check`/`aint fmt --check`
+were the one real constraint — both documented as silent on success
+on purpose, matching `gofmt -l`/`tsc --noEmit`'s CI-friendly
+convention — kept exactly that way, confirmed with the project owner
+before touching anything, and now tested more thoroughly (both
+streams, not just one) than before this milestone. Every other command
+narrates its real steps (`==>`, cyan) and colors its outcome (green/
+red/yellow), through `anstream`/`anstyle` — already in the dependency
+graph via `clap`'s own `--help` coloring, so nothing new to compile.
+Verified that piped output carries zero raw ANSI bytes both by the
+full pre-existing test suite passing unchanged (several tests exact-
+match `aint run`'s stdout) and by a direct byte-level dump of a real
+run's stdout and stderr. See
+`docs/milestones/43-cli-output/SPEC.md`.
+
 ## Looking ahead — an HTML abstraction (not yet scoped)
 
 Named directly by the project owner, not yet a milestone: AINT
