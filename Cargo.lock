@@ -11,7 +11,9 @@ dependencies = [
  "aint-ir",
  "aint-lexer",
  "aint-loader",
+ "aint-migrate",
  "aint-package",
+ "aint-parser",
  "aint-runtime",
  "aint-typechecker",
  "aint-vm",
@@ -57,6 +59,15 @@ version = "0.5.0"
 dependencies = [
  "aint-ast",
  "aint-package",
+ "aint-parser",
+]
+
+[[package]]
+name = "aint-migrate"
+version = "0.5.0"
+dependencies = [
+ "aint-ast",
+ "aint-fmt",
  "aint-parser",
 ]
 

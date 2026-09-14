@@ -5,6 +5,8 @@
 //! not supported yet (tool calling, `Distribution<T>`) and why one
 //! adapter serves all three vendors instead of three separate types.
 
+use std::time::Duration;
+
 use aint_ast::{Span, Type};
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +41,77 @@ impl HttpModel {
         self.api_key = Some(api_key.into());
         self
     }
+
+    /// Sends `body`, retrying a `429`/`5xx` response with backoff —
+    /// legitimate resilience against a transient rate limit or a
+    /// momentary outage, not an attempt to get around a provider's real
+    /// usage quota (a sustained `429` — the account's actual limit —
+    /// still surfaces as a `ModelError` once retries are exhausted,
+    /// same as before this existed). Honors a numeric `Retry-After`
+    /// header when the server sends one; otherwise waits `500ms * 2^n`,
+    /// capped at 8s. `MAX_RETRIES` extra attempts beyond the first, so
+    /// at most `MAX_RETRIES + 1` requests are ever sent for one `infer`
+    /// call — bounded, not a retry loop that runs forever. See
+    /// `docs/milestones/45-migrate/SPEC.md`.
+    async fn send_with_retry(
+        &self,
+        body: &ChatRequest<'_>,
+        span: Span,
+    ) -> Result<reqwest::Response, RuntimeError> {
+        const MAX_RETRIES: u32 = 4;
+        let mut attempt = 0u32;
+        loop {
+            let mut http_request = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .json(body);
+            if let Some(api_key) = &self.api_key {
+                http_request = http_request.bearer_auth(api_key);
+            }
+
+            let response = http_request
+                .send()
+                .await
+                .map_err(|err| RuntimeError::ModelError {
+                    message: format!("request to {} failed: {err}", self.base_url),
+                    span,
+                })?;
+
+            let status = response.status();
+            if status.is_success() {
+                return Ok(response);
+            }
+            let retryable = status.as_u16() == 429 || status.is_server_error();
+            if !retryable || attempt >= MAX_RETRIES {
+                return Err(RuntimeError::ModelError {
+                    message: format!("{} responded with {status}", self.base_url),
+                    span,
+                });
+            }
+
+            let delay = retry_after(&response)
+                .unwrap_or_else(|| Duration::from_millis(500 * 2u64.pow(attempt)).min(RETRY_CAP));
+            tokio::time::sleep(delay).await;
+            attempt += 1;
+        }
+    }
+}
+
+const RETRY_CAP: Duration = Duration::from_secs(8);
+
+/// A numeric `Retry-After` header value, in seconds — the HTTP-date
+/// form isn't handled, since no provider this adapter targets sends
+/// one; falls back to exponential backoff when absent or unparseable.
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
 }
 
 #[derive(Serialize)]
@@ -94,28 +167,7 @@ impl Model for HttpModel {
             }],
         };
 
-        let mut http_request = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .json(&body);
-        if let Some(api_key) = &self.api_key {
-            http_request = http_request.bearer_auth(api_key);
-        }
-
-        let response = http_request
-            .send()
-            .await
-            .map_err(|err| RuntimeError::ModelError {
-                message: format!("request to {} failed: {err}", self.base_url),
-                span: request.span,
-            })?;
-
-        if !response.status().is_success() {
-            return Err(RuntimeError::ModelError {
-                message: format!("{} responded with {}", self.base_url, response.status()),
-                span: request.span,
-            });
-        }
+        let response = self.send_with_retry(&body, request.span).await?;
 
         let parsed: ChatResponse =
             response
@@ -327,6 +379,26 @@ mod tests {
         format!("http://{addr}")
     }
 
+    /// Like `start_mock_server`, but serves one response per connection
+    /// from `raw_responses` in order — for proving retry-with-backoff
+    /// actually recovers (a `429` then a real answer), not just fails
+    /// differently on the retry.
+    fn start_mock_server_sequence(raw_responses: Vec<String>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind a local port");
+        let addr = listener.local_addr().expect("failed to read local addr");
+        std::thread::spawn(move || {
+            for raw_response in raw_responses {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 65536];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(raw_response.as_bytes());
+                    let _ = stream.flush();
+                }
+            }
+        });
+        format!("http://{addr}")
+    }
+
     fn http_ok(json_body: &str) -> String {
         format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -432,6 +504,60 @@ mod tests {
             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
                 .to_string(),
         );
+        let model = HttpModel::new(base_url, "test-model");
+        let err = model.infer(request(Type::Bool)).await.unwrap_err();
+        assert!(matches!(err, RuntimeError::ModelError { .. }));
+    }
+
+    /// A transient `429` is retried, not surfaced as a
+    /// failure — proven by a real success arriving on the *second*
+    /// connection, not just a differently-shaped failure on retry.
+    #[tokio::test]
+    async fn a_429_is_retried_and_a_later_success_is_returned() {
+        let base_url = start_mock_server_sequence(vec![
+            "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
+            http_ok(r#"{"choices":[{"message":{"content":"true"}}]}"#),
+        ]);
+        let model = HttpModel::new(base_url, "test-model");
+        let outcome = model.infer(request(Type::Bool)).await.unwrap();
+        assert_eq!(outcome, InferenceOutcome::Answer(Value::Bool(true)));
+    }
+
+    /// A `Retry-After` header (seconds) is honored instead of falling
+    /// back to exponential backoff — verified by measuring the actual
+    /// elapsed time, not just that the retry eventually succeeds.
+    #[tokio::test]
+    async fn a_retry_after_header_is_honored() {
+        let base_url = start_mock_server_sequence(vec![
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 1\r\nContent-Length: 0\r\n\
+             Connection: close\r\n\r\n"
+                .to_string(),
+            http_ok(r#"{"choices":[{"message":{"content":"true"}}]}"#),
+        ]);
+        let model = HttpModel::new(base_url, "test-model");
+        let start = std::time::Instant::now();
+        let outcome = model.infer(request(Type::Bool)).await.unwrap();
+        assert_eq!(outcome, InferenceOutcome::Answer(Value::Bool(true)));
+        assert!(
+            start.elapsed() >= Duration::from_millis(900),
+            "expected to wait roughly the declared Retry-After, got {:?}",
+            start.elapsed()
+        );
+    }
+
+    /// A *sustained* `429` — every attempt, including retries — is
+    /// still a real, reported failure once retries are exhausted, not
+    /// silently swallowed. This is the honest boundary: retry handles a
+    /// transient blip, it doesn't get around an account's real quota.
+    #[tokio::test]
+    async fn a_sustained_429_still_fails_after_retries_are_exhausted() {
+        let responses = vec![
+            "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string();
+            5
+        ];
+        let base_url = start_mock_server_sequence(responses);
         let model = HttpModel::new(base_url, "test-model");
         let err = model.infer(request(Type::Bool)).await.unwrap_err();
         assert!(matches!(err, RuntimeError::ModelError { .. }));

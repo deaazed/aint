@@ -408,6 +408,29 @@ literal) was found by breaking a real, shipped program
 with a Go-style suppression flag scoped to exactly where the ambiguity
 exists. See `docs/milestones/44-ai-native-ui/SPEC.md`.
 
+## 45 — `aint migrate` — done
+
+Requested directly, alongside a real rate-limit wall milestone 44's own
+live-model verification hit against Mistral (`429`, repeatedly).
+Declined the literal ask ("bypass" the quota) as stated — no key
+rotation, no spoofing, nothing designed to get around a paid service's
+usage controls — and built the legitimate versions instead:
+retry-with-backoff on both AI HTTP clients (`HttpModel`, `ChatClient`),
+and an `aint migrate` whose core "no regression" guarantee doesn't
+depend on a live model succeeding at all. A new `aint-migrate` crate
+holds two AST rewrites that are behavior-preserving by construction
+(collapsing `if { return a } else { return b }` into milestone 37's
+`return if { a } else { b }`, adopting milestone 38's `!` for
+boolean-literal comparisons) — re-verified by re-typechecking, not just
+trusted. `--ai` adds AI-assisted modernization, but only for a file
+with its own `test` block: the one case with a real before/after
+oracle, so a proposal is discarded unless it type-checks *and*
+reproduces every test's exact outcome. Verified against this
+project's own real `examples/` directory, not just synthetic cases —
+copied, migrated (22 of 36 files changed), `aint run`/`aint test`
+diffed byte-for-byte against the untouched original with zero
+mismatches. See `docs/milestones/45-migrate/SPEC.md`.
+
 ---
 
 ## Known hard problems, by category

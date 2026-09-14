@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 aint-ast = { path = "../ast" }
 aint-lexer = { path = "../lexer" }
+aint-parser = { path = "../parser" }
 aint-typechecker = { path = "../typechecker" }
 aint-ir = { path = "../ir" }
 aint-runtime = { path = "../runtime" }
@@ -21,6 +22,7 @@ aint-vm = { path = "../vm" }
 aint-package = { path = "../package" }
 aint-loader = { path = "../loader" }
 aint-fmt = { path = "../fmt" }
+aint-migrate = { path = "../migrate" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 # Backs `aint upgrade` only (milestone 42) - the same version/features

@@ -28,6 +28,7 @@ use std::process::ExitCode;
 use aint_ast::Program;
 use clap::{Parser, Subcommand};
 
+mod migrate_cmd;
 mod ui;
 use ui::{error_line, fail_line, ok_line, step, warn_line};
 
@@ -131,6 +132,30 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Rewrites an AINT project to the latest idiomatic syntax
+    /// (milestone 45) — a `.an` file or a directory, walked
+    /// recursively. The deterministic half (no flag needed) is
+    /// provably behavior-preserving and needs no model; `--ai` adds
+    /// AI-assisted modernization, applied only to a file with at least
+    /// one `test` block (the only case where a real before/after
+    /// behavioral oracle exists) and only ever kept if the rewritten
+    /// file still type-checks and its tests pass identically — anything
+    /// else is discarded, the original left untouched. See
+    /// docs/milestones/45-migrate/SPEC.md.
+    Migrate {
+        /// A .an file or a directory to migrate.
+        path: PathBuf,
+        /// Also attempt AI-assisted modernization (requires
+        /// AINT_MODEL_URL) for files with test coverage to verify
+        /// against.
+        #[arg(long)]
+        ai: bool,
+        /// Report which files would change without writing anything.
+        /// Skips the AI tier entirely (verifying a proposal requires
+        /// writing it).
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// AINT's only iteration mechanism is recursion — there are no loops —
@@ -158,6 +183,7 @@ fn main() -> ExitCode {
             Command::Fmt { path, check } => fmt(&path, check),
             Command::Scaffold { description, path } => scaffold(&description, &path),
             Command::Upgrade { check } => upgrade(check),
+            Command::Migrate { path, ai, check } => migrate_cmd::migrate(&path, ai, check),
         })
         .expect("failed to spawn the interpreter thread")
         .join()
@@ -220,7 +246,7 @@ fn parse_dotenv(text: &str) -> Vec<(String, String)> {
 /// identically. `aint-loader` (milestone 29) does the read/parse/import
 /// resolution in one step, folding every `import "path" as alias` it
 /// reaches into one flat `Program` before the type checker ever sees it.
-fn parse_and_check(path: &Path) -> Result<Program, ExitCode> {
+pub(crate) fn parse_and_check(path: &Path) -> Result<Program, ExitCode> {
     let program = aint_loader::load(path).map_err(|err| {
         error_line(format!("error: {err}"));
         ExitCode::FAILURE
@@ -292,7 +318,7 @@ fn fmt(path: &Path, check_only: bool) -> ExitCode {
     }
 }
 
-fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
+pub(crate) fn build_tokio_runtime() -> Result<tokio::runtime::Runtime, ExitCode> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -608,7 +634,7 @@ Respond with ONLY the AINT source code for the requested program, wrapped in a s
 /// Strips a ` ```an ` / ` ```aint ` / plain ` ``` ` code fence if the
 /// model wrapped its answer in one (most do, even when asked not to);
 /// otherwise returns the trimmed response as-is.
-fn extract_source(response: &str) -> String {
+pub(crate) fn extract_source(response: &str) -> String {
     let trimmed = response.trim();
     let Some(after_open) = trimmed.strip_prefix("```") else {
         return trimmed.to_string();

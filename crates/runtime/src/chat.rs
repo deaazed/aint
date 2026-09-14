@@ -15,6 +15,8 @@
 //! makes for the typechecker/runtime stdlib signature tables (see
 //! `stdlib.rs`'s own doc comment).
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 pub struct ChatClient {
@@ -56,26 +58,7 @@ impl ChatClient {
             ],
         };
 
-        let mut http_request = self
-            .client
-            .post(format!("{}/chat/completions", self.base_url))
-            .json(&body);
-        if let Some(api_key) = &self.api_key {
-            http_request = http_request.bearer_auth(api_key);
-        }
-
-        let response = http_request
-            .send()
-            .await
-            .map_err(|err| format!("request to {} failed: {err}", self.base_url))?;
-
-        if !response.status().is_success() {
-            return Err(format!(
-                "{} responded with {}",
-                self.base_url,
-                response.status()
-            ));
-        }
+        let response = self.send_with_retry(&body).await?;
 
         let parsed: ChatResponse = response
             .json()
@@ -89,6 +72,61 @@ impl ChatClient {
             .and_then(|choice| choice.message.content)
             .ok_or_else(|| "response had no message content".to_string())
     }
+
+    /// Same reasoning and shape as `HttpModel::send_with_retry`
+    /// (deliberately duplicated, not shared — see this file's own doc
+    /// comment): a transient `429`/`5xx` is retried with backoff, a
+    /// sustained one (the account's real quota) still fails once
+    /// retries are exhausted. `aint migrate --ai` (milestone 45) is
+    /// this client's heaviest real user — potentially one call per
+    /// file — so this matters more here than it did for scaffold's
+    /// single call.
+    async fn send_with_retry(&self, body: &ChatRequest<'_>) -> Result<reqwest::Response, String> {
+        const MAX_RETRIES: u32 = 4;
+        let mut attempt = 0u32;
+        loop {
+            let mut http_request = self
+                .client
+                .post(format!("{}/chat/completions", self.base_url))
+                .json(body);
+            if let Some(api_key) = &self.api_key {
+                http_request = http_request.bearer_auth(api_key);
+            }
+
+            let response = http_request
+                .send()
+                .await
+                .map_err(|err| format!("request to {} failed: {err}", self.base_url))?;
+
+            let status = response.status();
+            if status.is_success() {
+                return Ok(response);
+            }
+            let retryable = status.as_u16() == 429 || status.is_server_error();
+            if !retryable || attempt >= MAX_RETRIES {
+                return Err(format!("{} responded with {status}", self.base_url));
+            }
+
+            let delay = retry_after(&response)
+                .unwrap_or_else(|| Duration::from_millis(500 * 2u64.pow(attempt)).min(RETRY_CAP));
+            tokio::time::sleep(delay).await;
+            attempt += 1;
+        }
+    }
+}
+
+const RETRY_CAP: Duration = Duration::from_secs(8);
+
+fn retry_after(response: &reqwest::Response) -> Option<Duration> {
+    response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .map(Duration::from_secs)
 }
 
 #[derive(Serialize)]
@@ -126,14 +164,25 @@ mod tests {
     use super::*;
 
     fn start_mock_server(raw_response: String) -> String {
+        start_mock_server_sequence(vec![raw_response; 5])
+    }
+
+    /// Serves one response per connection from `raw_responses`, in
+    /// order — needed once retry-with-backoff means a single-response
+    /// server would otherwise see a *second* connection it can't
+    /// answer, masking the status this test actually wants to observe
+    /// behind an unrelated connection-refused error.
+    fn start_mock_server_sequence(raw_responses: Vec<String>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind a local port");
         let addr = listener.local_addr().expect("failed to read local addr");
         std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 65536];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(raw_response.as_bytes());
-                let _ = stream.flush();
+            for raw_response in raw_responses {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let mut buf = [0u8; 65536];
+                    let _ = stream.read(&mut buf);
+                    let _ = stream.write_all(raw_response.as_bytes());
+                    let _ = stream.flush();
+                }
             }
         });
         format!("http://{addr}")
@@ -165,5 +214,17 @@ mod tests {
         let client = ChatClient::new(base_url, "test-model");
         let err = client.complete("system", "user").await.unwrap_err();
         assert!(err.contains("500"));
+    }
+
+    #[tokio::test]
+    async fn a_429_is_retried_and_a_later_success_is_returned() {
+        let base_url = start_mock_server_sequence(vec![
+            "HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                .to_string(),
+            http_ok(r#"{"choices":[{"message":{"content":"hello"}}]}"#),
+        ]);
+        let client = ChatClient::new(base_url, "test-model");
+        let text = client.complete("system", "user").await.unwrap();
+        assert_eq!(text, "hello");
     }
 }
