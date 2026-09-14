@@ -141,6 +141,36 @@ mod tests {
     }
 
     #[test]
+    fn formats_a_node_literal_with_props_and_children() {
+        let output = format(r#"let x=Button{href:"/a" "Go"}"#).expect("should format");
+        assert_eq!(output, "let x = Button { href: \"/a\" \"Go\" }\n");
+    }
+
+    #[test]
+    fn formats_an_empty_node_literal() {
+        let output = format("print(Group{})").expect("should format");
+        assert_eq!(output, "print(Group {})\n");
+    }
+
+    #[test]
+    fn formats_nested_node_literals() {
+        let output =
+            format(r#"let x=Group{Heading{title} Paragraph{tagline}}"#).expect("should format");
+        assert_eq!(
+            output,
+            "let x = Group { Heading { title } Paragraph { tagline } }\n"
+        );
+    }
+
+    #[test]
+    fn an_if_condition_ending_in_a_bare_identifier_still_formats_correctly() {
+        // Regression guard for milestone 44's node-literal grammar: `if
+        // a { ... }` must not misparse `a { ... }` as a node literal.
+        let output = format("if is_valid{print(1)}").expect("should format");
+        assert_eq!(output, "if is_valid {\n    print(1)\n}\n");
+    }
+
+    #[test]
     fn formats_an_else_if_statement_chain_without_extra_indentation() {
         let output = format(concat!(
             "fn grade(n: Int) -> String {\n",

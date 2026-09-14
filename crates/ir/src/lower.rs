@@ -51,6 +51,12 @@ pub enum LowerError {
     /// miscompilation. See
     /// `docs/milestones/38-comparison-and-logical-operators/SPEC.md`.
     UnsupportedShortCircuit { span: Span },
+    /// A `Node` literal or a `Type::Node`-typed value (milestone 44).
+    /// The bytecode VM's deterministic core has no `Value::Node`
+    /// representation — a documented parity gap, same shape as
+    /// `UnsupportedLambda`/`UnsupportedIfExpr`, not a silent
+    /// miscompilation. See `docs/milestones/44-ai-native-ui/SPEC.md`.
+    UnsupportedNode { span: Span },
 }
 
 /// Lowers an entire program. Expects `program` to already be
@@ -218,6 +224,7 @@ impl Lowerer {
             ExprKind::Call { callee, args } => self.lower_call(callee, args, expr.span),
             ExprKind::Lambda { .. } => Err(LowerError::UnsupportedLambda { span: expr.span }),
             ExprKind::If { .. } => Err(LowerError::UnsupportedIfExpr { span: expr.span }),
+            ExprKind::NodeLiteral { .. } => Err(LowerError::UnsupportedNode { span: expr.span }),
         }
     }
 

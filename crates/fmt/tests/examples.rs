@@ -314,6 +314,27 @@ fn expr_eq(a: &Expr, b: &Expr) -> bool {
                 else_value: e2,
             },
         ) => expr_eq(c1, c2) && expr_eq(t1, t2) && expr_eq(e1, e2),
+        (
+            ExprKind::NodeLiteral {
+                role: role1,
+                props: props1,
+                children: children1,
+            },
+            ExprKind::NodeLiteral {
+                role: role2,
+                props: props2,
+                children: children2,
+            },
+        ) => {
+            role1 == role2
+                && props1.len() == props2.len()
+                && props1
+                    .iter()
+                    .zip(props2)
+                    .all(|((n1, v1), (n2, v2))| n1 == n2 && expr_eq(v1, v2))
+                && children1.len() == children2.len()
+                && children1.iter().zip(children2).all(|(a, b)| expr_eq(a, b))
+        }
         _ => false,
     }
 }

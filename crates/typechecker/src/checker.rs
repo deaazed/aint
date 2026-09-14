@@ -267,7 +267,7 @@ impl TypeChecker {
                     span,
                 }),
             },
-            Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit => Ok(()),
+            Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Node => Ok(()),
             Type::Function(params, ret) => {
                 for param in params {
                     self.validate_type(param, span)?;
@@ -816,6 +816,35 @@ impl TypeChecker {
                     });
                 }
                 Ok(then_ty)
+            }
+            ExprKind::NodeLiteral {
+                props, children, ..
+            } => {
+                for (name, value) in props {
+                    let ty = self.check_expr(value)?;
+                    if ty != Type::String {
+                        return Err(TypeError::Mismatch {
+                            message: format!("node prop `{name}` must be a String, found {ty}"),
+                            span: value.span,
+                        });
+                    }
+                }
+                for child in children {
+                    let ty = self.check_expr(child)?;
+                    // A child is a nested Node, a text leaf, or a
+                    // List<Node> spliced in as multiple children — see
+                    // `docs/milestones/44-ai-native-ui/SPEC.md`.
+                    let is_list_of_node = matches!(&ty, Type::List(inner) if **inner == Type::Node);
+                    if ty != Type::Node && ty != Type::String && !is_list_of_node {
+                        return Err(TypeError::Mismatch {
+                            message: format!(
+                                "node child must be Node, String, or List<Node>, found {ty}"
+                            ),
+                            span: child.span,
+                        });
+                    }
+                }
+                Ok(Type::Node)
             }
         }
     }
@@ -1689,6 +1718,55 @@ mod tests {
              print(await sentiment(\"great\") == Sentiment_Positive)"
         )
         .is_ok());
+    }
+
+    // --- node literals (milestone 44) --------------------------------
+
+    #[test]
+    fn a_node_literal_type_checks_as_node() {
+        assert!(check(r#"let n = Group { Heading { "hi" } }"#).is_ok());
+    }
+
+    #[test]
+    fn a_node_prop_must_be_a_string() {
+        let err = check("let n = Group { count: 1 }").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn a_node_child_must_be_node_string_or_list_of_node() {
+        let err = check("let n = Group { true }").unwrap_err();
+        assert!(matches!(err, TypeError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn a_list_of_node_splices_in_as_children() {
+        assert!(check(
+            r#"let items = [Heading { "a" }, Heading { "b" }]
+               let n = Group { items }"#
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn infer_can_return_a_node() {
+        assert!(check(
+            "infer tagline(topic: String) -> Node\n\
+             let n = Group { Heading { \"hi\" } await tagline(\"AINT\") }"
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn render_html_requires_node_and_returns_string() {
+        assert!(check(
+            "import ui\n\
+             let n = Group { \"hi\" }\n\
+             print(render_html(n))"
+        )
+        .is_ok());
+        let err = check("import ui\nprint(render_html(\"not a node\"))").unwrap_err();
+        assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));
     }
 
     #[test]

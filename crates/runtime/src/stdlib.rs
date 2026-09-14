@@ -98,6 +98,7 @@ pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction
             ("log_error", NativeFunction::LogError),
         ]),
         "http" => Some(vec![("http_serve", NativeFunction::HttpServe)]),
+        "ui" => Some(vec![("render_html", NativeFunction::RenderHtml)]),
         _ => None,
     }
 }
@@ -430,7 +431,85 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
             log_line("ERROR", string(&message, span)?);
             Ok(Value::Unit)
         }
+        NativeFunction::RenderHtml => {
+            let [node] = one(native, args, span)?;
+            Ok(Value::String(render_node_html(&node, span)?))
+        }
     }
+}
+
+/// Walks a `Value::Node` tree to an HTML string (milestone 44) — the
+/// one renderer that exists today; see `NativeFunction::RenderHtml`.
+/// `role` is an open vocabulary (`Type::Node`'s doc comment), so an
+/// unrecognized role degrades gracefully to a `<div data-role="...">`
+/// instead of erroring — this matters specifically for a role an
+/// `infer` call invented that the fixed table below doesn't know.
+fn render_node_html(value: &Value, span: Span) -> Result<String, RuntimeError> {
+    match value {
+        Value::String(text) => Ok(escape_html(text)),
+        Value::Node {
+            role,
+            props,
+            children,
+        } => {
+            let mut rendered = Vec::with_capacity(children.len());
+            for child in children {
+                rendered.push(render_node_html(child, span)?);
+            }
+            let prop = |name: &str| {
+                props
+                    .iter()
+                    .find(|(k, _)| k == name)
+                    .map(|(_, v)| escape_html(v))
+            };
+            Ok(match role.as_str() {
+                "Heading" => format!("<h2>{}</h2>", rendered.concat()),
+                "Text" => format!("<span>{}</span>", rendered.concat()),
+                "Paragraph" => format!("<p>{}</p>", rendered.concat()),
+                "Group" => format!("<div>{}</div>", rendered.concat()),
+                "Button" | "Link" => match prop("href") {
+                    Some(href) => format!(
+                        "<a class=\"button\" href=\"{href}\">{}</a>",
+                        rendered.concat()
+                    ),
+                    None => format!("<button>{}</button>", rendered.concat()),
+                },
+                "List" => {
+                    let items: String = rendered.iter().map(|s| format!("<li>{s}</li>")).collect();
+                    format!("<ul>{items}</ul>")
+                }
+                "Image" => format!(
+                    "<img src=\"{}\" alt=\"{}\">",
+                    prop("src").unwrap_or_default(),
+                    prop("alt").unwrap_or_default()
+                ),
+                other => format!(
+                    "<div data-role=\"{}\">{}</div>",
+                    escape_html(other),
+                    rendered.concat()
+                ),
+            })
+        }
+        other => Err(RuntimeError::TypeMismatch {
+            message: format!("render_html expects a Node, found a {}", other.type_name()),
+            span,
+        }),
+    }
+}
+
+fn escape_html(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 fn log_line(level: &str, message: &str) {

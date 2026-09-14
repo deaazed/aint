@@ -539,6 +539,51 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 // comment.
                 captured_env: Rc::clone(env),
             }))),
+            ExprKind::NodeLiteral {
+                role,
+                props,
+                children,
+            } => {
+                let mut prop_values = Vec::with_capacity(props.len());
+                for (name, value_expr) in props {
+                    let value = self.eval_expr(value_expr, env).await?;
+                    match value {
+                        Value::String(s) => prop_values.push((name.clone(), s)),
+                        other => {
+                            return Err(RuntimeError::TypeMismatch {
+                                message: format!(
+                                    "node prop `{name}` must be a String, found a {}",
+                                    other.type_name()
+                                ),
+                                span: value_expr.span,
+                            });
+                        }
+                    }
+                }
+                let mut child_values = Vec::with_capacity(children.len());
+                for child_expr in children {
+                    let value = self.eval_expr(child_expr, env).await?;
+                    match value {
+                        node @ Value::Node { .. } => child_values.push(node),
+                        text @ Value::String(_) => child_values.push(text),
+                        Value::List(items) => child_values.extend(items),
+                        other => {
+                            return Err(RuntimeError::TypeMismatch {
+                                message: format!(
+                                    "node child must be a Node, String, or List<Node>, found a {}",
+                                    other.type_name()
+                                ),
+                                span: child_expr.span,
+                            });
+                        }
+                    }
+                }
+                Ok(Value::Node {
+                    role: role.clone(),
+                    props: prop_values,
+                    children: child_values,
+                })
+            }
         }
     }
 
@@ -2430,6 +2475,79 @@ mod tests {
                 .expect_err("should produce a runtime error")
         });
         assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
+    }
+
+    // --- Node / render_html (milestone 44) ---------------------------
+
+    #[test]
+    fn a_node_literal_evaluates_to_a_node_value() {
+        let output = run_capturing(
+            r#"import ui
+               let n = Group { Heading { "hi" } }
+               print(render_html(n))"#,
+        );
+        assert_eq!(output, "<div><h2>hi</h2></div>\n");
+    }
+
+    #[test]
+    fn node_props_become_html_attributes_and_text_is_escaped() {
+        let output = run_capturing(
+            r#"import ui
+               let n = Button { href: "/a&b" "<script>" }
+               print(render_html(n))"#,
+        );
+        assert_eq!(
+            output,
+            "<a class=\"button\" href=\"/a&amp;b\">&lt;script&gt;</a>\n"
+        );
+    }
+
+    #[test]
+    fn a_list_of_node_child_splices_in_as_multiple_children() {
+        let output = run_capturing(
+            r#"import ui
+               let items = [Heading { "a" }, Heading { "b" }]
+               print(render_html(Group { items }))"#,
+        );
+        assert_eq!(output, "<div><h2>a</h2><h2>b</h2></div>\n");
+    }
+
+    #[test]
+    fn an_unrecognized_role_renders_as_a_data_role_div() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Sidebar { "x" }))"#,
+        );
+        assert_eq!(output, "<div data-role=\"Sidebar\">x</div>\n");
+    }
+
+    #[test]
+    fn infer_returning_a_node_composes_with_a_hand_authored_tree() {
+        let output = run_capturing_with_model(
+            r#"import ui
+               infer tagline(topic: String) -> Node
+               fn hero() -> Node {
+                   return Group {
+                       Heading { "AINT" }
+                       await tagline("positioning")
+                   }
+               }
+               print(render_html(hero()))"#,
+            || {
+                crate::model::MockModel::new().mock(
+                    "tagline",
+                    Value::Node {
+                        role: "Paragraph".to_string(),
+                        props: Vec::new(),
+                        children: vec![Value::String("a language that types AI".to_string())],
+                    },
+                )
+            },
+        );
+        assert_eq!(
+            output,
+            "<div><h2>AINT</h2><p>a language that types AI</p></div>\n"
+        );
     }
 
     // --- Distribution<T> / Option<T> -----------------------------------

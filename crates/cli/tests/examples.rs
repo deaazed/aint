@@ -381,6 +381,43 @@ fn enums_an_prints_and_exits_zero() {
     );
 }
 
+/// `examples/ui_nodes.an` (milestone 44) — a hand-authored `Node` tree
+/// rendered to HTML through the real binary.
+#[test]
+fn ui_nodes_an_prints_and_exits_zero() {
+    let output = run_aint(&example_path("ui_nodes.an"));
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "<div><h2>AINT</h2><div><a class=\"button\" href=\"/docs\">Docs</a>\
+         <a class=\"button\" href=\"/try\">Try it</a></div></div>\n"
+    );
+}
+
+#[test]
+fn ui_nodes_an_test_block_passes() {
+    let output = test_aint(&example_path("ui_nodes.an"));
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("2 run, 2 passed, 0 failed"));
+}
+
+/// `examples/ui_nodes.an` uses a `Node` literal (milestone 44) - the
+/// VM's deterministic core has no `Value::Node` at all, so lowering
+/// rejects it outright, the same shape as lambdas and if-expressions
+/// before it.
+#[test]
+fn a_program_using_a_node_literal_fails_clearly_under_the_vm() {
+    let output = run_aint_vm(&example_path("ui_nodes.an"));
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("UnsupportedNode"),
+        "expected a clear unsupported-node message, got: {stderr}"
+    );
+}
+
 #[test]
 fn a_type_error_is_rejected_before_anything_runs() {
     let path = std::env::temp_dir().join(format!("aint_cli_type_error_{}.an", std::process::id()));

@@ -377,7 +377,9 @@ fn rename_type(ty: Type, map: &std::collections::HashMap<String, String>) -> Typ
             params.into_iter().map(|p| rename_type(p, map)).collect(),
             Box::new(rename_type(*ret, map)),
         ),
-        other @ (Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit) => other,
+        other @ (Type::Int | Type::Float | Type::Bool | Type::String | Type::Unit | Type::Node) => {
+            other
+        }
     }
 }
 
@@ -435,6 +437,21 @@ fn rename_expr(expr: Expr, map: &std::collections::HashMap<String, String>) -> E
             condition: Box::new(rename_expr(*condition, map)),
             then_value: Box::new(rename_expr(*then_value, map)),
             else_value: Box::new(rename_expr(*else_value, map)),
+        },
+        ExprKind::NodeLiteral {
+            role,
+            props,
+            children,
+        } => ExprKind::NodeLiteral {
+            // `role` is an open-vocabulary tag, not a declared name —
+            // never renamed, same reasoning as `rename_type` leaving
+            // `Type::Node` untouched.
+            role,
+            props: props
+                .into_iter()
+                .map(|(name, value)| (name, rename_expr(value, map)))
+                .collect(),
+            children: children.into_iter().map(|c| rename_expr(c, map)).collect(),
         },
         other @ (ExprKind::Integer(_)
         | ExprKind::Float(_)

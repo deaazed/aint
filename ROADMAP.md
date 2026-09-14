@@ -386,23 +386,27 @@ match `aint run`'s stdout) and by a direct byte-level dump of a real
 run's stdout and stderr. See
 `docs/milestones/43-cli-output/SPEC.md`.
 
-## Looking ahead — an HTML abstraction (not yet scoped)
+## 44 — A typed, AI-native way to build UI — done
 
-Named directly by the project owner, not yet a milestone: AINT
-programs that render web pages should express *AINT*, not hand-nested
-HTML strings — the retrospective behind Phase 3 already named this as
-the single biggest remaining source of boilerplate (`aint-website`'s
-`layout.an` alone is a 25-item `join_lines` list just for `<head>`).
-Milestones 37 (conditional expressions) and 39 (`string_replace`)
-each chipped at pieces of that pain without addressing the core of it:
-building markup is still string concatenation with extra steps. A real
-fix — some templating primitive, or a typed way to build markup that
-isn't just deeper `string_concat` nesting — is real, separate design
-work, deliberately deferred rather than designed here in passing. When
-it's taken up, it should get the same treatment every other milestone
-in this document did: a `SPEC.md` weighing the actual options (a
-literal templating syntax? a builder-style stdlib? something else
-entirely?) against real call sites, not decided in the abstract.
+The HTML-abstraction pain named after Phase 3 (`aint-website`'s
+`layout.an` a 25-item `join_lines` list just for `<head>`) turned into
+something bigger once actually scoped: not an HTML templating feature,
+but a platform-agnostic UI-tree type (`Node`) with new literal syntax
+(`Identifier { props children }`) that an `infer`/`tool` declaration
+can also return — validated, budgeted, and permissioned exactly like
+every other AI result in the language already is. A hand-authored
+`Group { Heading { title } }` and an `await some_infer_call()`
+returning `Node` compose in the same tree because they're the same
+type; nothing node-literal-specific had to be added to the language's
+AI story for that to be true. `render_html` is the one renderer that
+exists, since `http_serve` is AINT's only real output surface — the
+tree itself carries no HTML assumptions, so a second renderer is new,
+not a rewrite. A real grammar conflict with `if`'s own `cond { ... }`
+syntax (a bare-identifier condition misparsing as the start of a node
+literal) was found by breaking a real, shipped program
+(`examples/customer_support/server.an`), not by inspection, and fixed
+with a Go-style suppression flag scoped to exactly where the ambiguity
+exists. See `docs/milestones/44-ai-native-ui/SPEC.md`.
 
 ---
 

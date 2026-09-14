@@ -128,9 +128,10 @@ fn collect_mock_targets(program: &Program) -> HashMap<String, MockTarget> {
 }
 
 /// Evaluates a `mock` statement's value with no running interpreter —
-/// deliberately restricted to literals and `EnumName_Variant`
-/// references. See SPEC.md for why this is a small standalone
-/// evaluator instead of `Interpreter::eval_expr`.
+/// deliberately restricted to literals, `EnumName_Variant` references,
+/// and node literals built from those (milestone 44). See SPEC.md for
+/// why this is a small standalone evaluator instead of
+/// `Interpreter::eval_expr`.
 fn eval_mock_value(
     expr: &Expr,
     enum_variants: &HashMap<String, Value>,
@@ -148,6 +149,55 @@ fn eval_mock_value(
                     message: format!("`{name}` is not a known enum variant"),
                     span: expr.span,
                 })
+        }
+        // A node literal built entirely from other accepted mock values
+        // (milestone 44) — the natural way to mock an `infer`/`tool`
+        // declared `-> Node`, recursing through this same restricted
+        // evaluator rather than reaching for `Interpreter::eval_expr`.
+        // `List<Node>`-splicing isn't accepted here: no list literal is
+        // an accepted mock value at all today, a pre-existing
+        // restriction this doesn't widen.
+        ExprKind::NodeLiteral {
+            role,
+            props,
+            children,
+        } => {
+            let mut prop_values = Vec::with_capacity(props.len());
+            for (name, value_expr) in props {
+                match eval_mock_value(value_expr, enum_variants)? {
+                    Value::String(s) => prop_values.push((name.clone(), s)),
+                    other => {
+                        return Err(RuntimeError::UnsupportedMockValue {
+                            message: format!(
+                                "node prop `{name}` must be a String, found a {}",
+                                other.type_name()
+                            ),
+                            span: value_expr.span,
+                        });
+                    }
+                }
+            }
+            let mut child_values = Vec::with_capacity(children.len());
+            for child_expr in children {
+                match eval_mock_value(child_expr, enum_variants)? {
+                    node @ Value::Node { .. } => child_values.push(node),
+                    text @ Value::String(_) => child_values.push(text),
+                    other => {
+                        return Err(RuntimeError::UnsupportedMockValue {
+                            message: format!(
+                                "node child must be a Node or String literal, found a {}",
+                                other.type_name()
+                            ),
+                            span: child_expr.span,
+                        });
+                    }
+                }
+            }
+            Ok(Value::Node {
+                role: role.clone(),
+                props: prop_values,
+                children: child_values,
+            })
         }
         _ => Err(RuntimeError::UnsupportedMockValue {
             message: "mock values must be a literal or an EnumName_Variant reference".to_string(),

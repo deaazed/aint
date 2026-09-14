@@ -54,12 +54,16 @@ Tool<T>                — the type of an unawaited tool call
 Enum(name)             — a user-declared enum, compared nominally
 Distribution<T>         — T must be an enum
 fn(T, T, ...) -> T      — a closure's type (milestone 30)
+Node                    — a UI tree: a role, string props, Node/String children (milestone 44)
 ```
 
 `Task<T>`, `Inference<T>`, and `Tool<T>` are never written as source
 syntax — the type checker computes them at a call-site's type when a
 value isn't `await`-ed. `fn(...) -> T` is the one type spelling
-written as source that isn't a bare identifier; see §4.3.
+written as source that isn't a bare identifier; see §4.3. `Node` is
+constructed by `Identifier { ... }` literal syntax (§4.6) or returned
+by an `infer`/`tool` declaration like any other type — see
+`docs/milestones/44-ai-native-ui/SPEC.md`.
 
 Static, nominal typing throughout. No implicit numeric coercion
 (`Int`/`Float` are distinct; no arithmetic mixes them). Equality
@@ -292,10 +296,12 @@ budget {
 top-level statement in the file re-run first (see the important
 caveat in §10). `mock` is only valid inside a `test` block, and only
 targets a declared `infer` or `tool`; its right-hand side is
-restricted to a literal or an `EnumName_Variant` reference — not a
-general expression (there is no source syntax for constructing a
-`Distribution<T>` literal, an `Option<T>` value, or anything else more
-structured). `assert` is a general statement, valid anywhere, not
+restricted to a literal, an `EnumName_Variant` reference, or a node
+literal built from those (milestone 44, the natural way to mock an
+`infer`/`tool` declared `-> Node`) — not a general expression (there is
+no source syntax for constructing a `Distribution<T>` literal, an
+`Option<T>` value, or anything else more structured). `assert` is a
+general statement, valid anywhere, not
 test-only — a failing `assert` during `aint run` is a runtime error;
 during `aint test`, it fails just that test. `budget` may appear at
 most once per program; every field is optional (`None` = unlimited on
@@ -303,6 +309,39 @@ that axis); `max_tokens`/`max_cost` are checked but currently vacuous
 in practice, since `TokenUsage` is always zero (no `Model`
 implementation reports real usage yet) — see
 `docs/milestones/17-ai-resource-management/SPEC.md`.
+
+### 4.10 Node literals
+
+```
+Role { }
+Role { name: expr }
+Role { expr expr ... }
+Role { name: expr ... expr expr ... }
+```
+
+`Identifier { ... }` in expression position (milestone 44) builds a
+`Node` value. `Role` is an open-vocabulary string tag, not a declared
+type or enum name — never checked against any registry. Each item
+inside `{ }` is either `name: expr` (a **prop**; `expr` must type to
+`String`) or a bare `expr` (a **child**; must type to `Node`, `String`
+— a text leaf — or `List<Node>`, spliced in as multiple children). No
+commas between items, same as a block's statements.
+
+This was previously always a parse error — `Identifier` followed
+immediately by `{` never continued into anything, since postfix
+parsing only continues on `(` or `[` — so it introduces no ambiguity
+with anything that parsed before this milestone, on its own. It *does*
+collide with `if`'s own grammar (`if cond { ... }` places a `{`
+immediately after the condition with no separator): the parser
+suppresses node-literal parsing while parsing an `if` condition
+directly, re-enabling it inside any explicitly-delimited
+sub-expression (`(...)`, `[...]`, a call's argument list). See
+`docs/milestones/44-ai-native-ui/SPEC.md`.
+
+`import ui` provides `render_html(node: Node) -> String` — the one
+renderer that exists, mapping a fixed set of roles to HTML markup and
+degrading an unrecognized role to `<div data-role="...">` rather than
+erroring.
 
 ## 5. Expressions
 
@@ -318,6 +357,7 @@ expr[expr]                        (indexing)
 await expr
 fn(param: Type, ...) -> Type { ... }    (lambda, milestone 30 — see §4.3)
 if condition { value } else { value }   (milestone 37 — see §4.2)
+Role { name: expr ... expr ... }        (node literal, milestone 44 — see §4.10)
 ```
 
 Precedence, lowest to highest: `||` < `&&` < `==`/`!=` < `<`/`>`/`<=`/
@@ -439,6 +479,7 @@ ungated.
 | `auth` | `auth_hash_password`/`auth_verify_password` (real `bcrypt`), `auth_generate_token` (real randomness) |
 | `log` | `log_info`, `log_error` — timestamped lines to stderr |
 | `http` | `http_serve(port)` (async) — a hand-rolled HTTP/1.1 server over a raw `TcpListener`, one connection at a time; dispatches every request to a program-defined `handle_request(method: String, path: String, body: String) -> String`; no router (see `docs/milestones/25-real-application/SPEC.md` for why) |
+| `ui` | `render_html(node: Node) -> String` (milestone 44) — the one renderer that exists for a `Node` tree; see §4.10 |
 
 No `Int`/`String` conversion exists anywhere in the stdlib. `print`
 accepts any value type (via `Display`), which is the only way to
@@ -492,6 +533,18 @@ it was found):
   need no short-circuiting, so they run under the VM exactly like every
   other comparison/unary operator already did. (§5,
   `docs/milestones/38-comparison-and-logical-operators/SPEC.md`)
+- **`Node` doesn't run under `aint run --vm`.** A node literal, or
+  anything else producing a `Type::Node` value, fails clearly at IR
+  lowering (`LowerError::UnsupportedNode`) — same shape as the
+  closures/if-expression/short-circuit gaps above; the bytecode VM's
+  deterministic core has no `Value::Node` representation at all.
+  (§4.10, `docs/milestones/44-ai-native-ui/SPEC.md`)
+- **`infer -> List<Node>` doesn't work against a real model.**
+  `HttpModel` has no `Type::List(_)` case for any element type — a
+  pre-existing gap, not new — so this type-checks and works under
+  `MockModel`/`aint test` but fails against a real model the same way
+  `Distribution<T>` and tool-calling already do. (§4.10,
+  `docs/milestones/44-ai-native-ui/SPEC.md`)
 - **No generics, structs, or interfaces/traits.** Closures (milestone
   30) were deliberately the smallest lever for passing behavior around
   — these stay out of scope until real framework-building shows what's

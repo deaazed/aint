@@ -62,6 +62,22 @@ pub enum ExprKind {
         then_value: Box<Expr>,
         else_value: Box<Expr>,
     },
+    /// `Role { name: "value", child, child }` (milestone 44) — a `Node`
+    /// literal. `role` is the leading identifier, kept as a plain
+    /// `String` tag rather than resolved against any registry (open
+    /// vocabulary — see `Type::Node`). Previously `Identifier {` was
+    /// always a parse error (postfix parsing only ever continues on `(`
+    /// or `[`), so this introduces no grammar ambiguity with anything
+    /// that parsed before this milestone. Each item in the body is
+    /// either `name: expr` (a prop) or a bare `expr` (a child),
+    /// distinguished by one token of lookahead (`Identifier` then
+    /// `Colon`) — the same `:` already used for `param: Type`. See
+    /// `docs/milestones/44-ai-native-ui/SPEC.md`.
+    NodeLiteral {
+        role: String,
+        props: Vec<(String, Expr)>,
+        children: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

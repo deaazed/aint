@@ -52,6 +52,16 @@ pub enum Value {
     /// run, exactly like [`Value::Inference`]. `await` sends it to the
     /// interpreter's `MockTool`.
     ToolCall(Rc<PendingToolCall>),
+    /// A `Node` literal's value (milestone 44): a `role` tag, string
+    /// props, and children each guaranteed — by construction, both from
+    /// `Identifier { ... }` literals and from a validated `infer`/`tool`
+    /// response — to be `Value::Node` or `Value::String`. See
+    /// `docs/milestones/44-ai-native-ui/SPEC.md`.
+    Node {
+        role: String,
+        props: Vec<(String, String)>,
+        children: Vec<Value>,
+    },
 }
 
 #[derive(Debug)]
@@ -274,6 +284,12 @@ pub enum NativeFunction {
     /// implemented directly on `Interpreter`, not in `stdlib::call`.
     /// See SPEC.md.
     HttpServe,
+    /// Renders a `Node` tree to an HTML string (milestone 44) — the one
+    /// concrete renderer that exists today, since `http_serve` is
+    /// AINT's only real output surface. `Node` itself never encodes
+    /// HTML/web assumptions, so a second renderer is a new native, not
+    /// a redesign. See `docs/milestones/44-ai-native-ui/SPEC.md`.
+    RenderHtml,
 }
 
 impl Value {
@@ -298,6 +314,7 @@ impl Value {
             Value::Enum(_, _) => "Enum",
             Value::Distribution(_, _) => "Distribution",
             Value::Option(_) => "Option",
+            Value::Node { .. } => "Node",
         }
     }
 }
@@ -340,6 +357,9 @@ impl fmt::Display for Value {
             Value::Option(None) => write!(f, "None"),
             Value::ToolFn(tool_fn) => write!(f, "<tool fn {}>", tool_fn.name),
             Value::ToolCall(pending) => write!(f, "<tool call {}>", pending.tool),
+            Value::Node { role, children, .. } => {
+                write!(f, "<node {role} ({} children)>", children.len())
+            }
         }
     }
 }
@@ -388,6 +408,7 @@ impl NativeFunction {
             NativeFunction::LogInfo => "log_info",
             NativeFunction::LogError => "log_error",
             NativeFunction::HttpServe => "http_serve",
+            NativeFunction::RenderHtml => "render_html",
         }
     }
 

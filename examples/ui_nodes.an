@@ -1,0 +1,35 @@
+import ui
+
+infer tagline(topic: String) -> Node
+
+fn nav_link(label: String, href: String) -> Node {
+    return Button { href: href label }
+}
+
+fn hero(title: String, links: List<Node>) -> Node {
+    return Group {
+        Heading { title }
+        Group { links }
+    }
+}
+
+fn main() -> Unit {
+    let links = [nav_link("Docs", "/docs"), nav_link("Try it", "/try")]
+    print(render_html(hero("AINT", links)))
+}
+
+main()
+
+test "a hand-authored tree and an AI-generated node compose and render together" {
+    mock tagline -> Group { Paragraph { "a language that types AI, not just calls it" } }
+    let page = Group {
+        Heading { "AINT" }
+        await tagline("positioning")
+    }
+    assert render_html(page) == "<div><h2>AINT</h2><div><p>a language that types AI, not just calls it</p></div></div>"
+}
+
+test "an unrecognized role still renders, gracefully, as a labeled div" {
+    let badge = Sidebar { "beta" }
+    assert render_html(badge) == "<div data-role=\"Sidebar\">beta</div>"
+}

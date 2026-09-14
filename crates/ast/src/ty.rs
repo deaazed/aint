@@ -43,6 +43,15 @@ pub enum Type {
     /// non-`infer`/`tool` top-level `fn` — see
     /// `docs/milestones/30-closures/SPEC.md`.
     Function(Vec<Type>, Box<Type>),
+    /// A UI tree node (milestone 44): a `role` tag (`"Heading"`,
+    /// `"Group"`, ... — an open vocabulary, not a closed enum, since a
+    /// renderer degrades gracefully on an unrecognized role rather than
+    /// rejecting it), string-valued `props`, and `children` that are
+    /// each `Node` or `String`. The one type both `Identifier { ... }`
+    /// node literals and an `infer`/`tool` declared `-> Node` produce —
+    /// composable in the same tree either way, validated identically.
+    /// See `docs/milestones/44-ai-native-ui/SPEC.md`.
+    Node,
 }
 
 impl fmt::Display for Type {
@@ -70,6 +79,7 @@ impl fmt::Display for Type {
                 }
                 write!(f, ") -> {ret}")
             }
+            Type::Node => write!(f, "Node"),
         }
     }
 }

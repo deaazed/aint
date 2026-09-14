@@ -434,6 +434,31 @@ impl Printer {
                     self.out.push_str(" }");
                 }
             }
+            ExprKind::NodeLiteral {
+                role,
+                props,
+                children,
+            } => {
+                self.out.push_str(role);
+                self.out.push_str(" {");
+                // No commas between items: the parser doesn't consume
+                // one here (see `Parser::parse_node_literal`), so
+                // printing one would make this unparseable.
+                for (name, value) in props {
+                    self.out.push(' ');
+                    self.out.push_str(name);
+                    self.out.push_str(": ");
+                    self.expr(value, 0);
+                }
+                for child in children {
+                    self.out.push(' ');
+                    self.expr(child, 0);
+                }
+                if !props.is_empty() || !children.is_empty() {
+                    self.out.push(' ');
+                }
+                self.out.push('}');
+            }
         }
     }
 }

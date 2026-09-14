@@ -13,11 +13,40 @@ use crate::error::ParseError;
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// True while parsing an `if` condition directly (not inside a
+    /// parenthesized/bracketed/call-argument sub-expression, which has
+    /// its own unambiguous closing delimiter). `if`'s grammar places a
+    /// `{` immediately after the condition with no separator — the same
+    /// dangling-brace conflict Go's grammar has with composite literals
+    /// in an `if`/`for`/`switch` header, and solved the same way here:
+    /// suppress node-literal parsing (milestone 44) for exactly this
+    /// span, so `if is_valid { ... }` keeps meaning what it always did
+    /// instead of misparsing `is_valid { ... }` as a node literal. See
+    /// `docs/milestones/44-ai-native-ui/SPEC.md`.
+    suppress_node_literal: bool,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            suppress_node_literal: false,
+        }
+    }
+
+    fn suppressing_node_literals<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = std::mem::replace(&mut self.suppress_node_literal, true);
+        let result = f(self);
+        self.suppress_node_literal = previous;
+        result
+    }
+
+    fn allowing_node_literals<T>(&mut self, f: impl FnOnce(&mut Self) -> T) -> T {
+        let previous = std::mem::replace(&mut self.suppress_node_literal, false);
+        let result = f(self);
+        self.suppress_node_literal = previous;
+        result
     }
 
     fn current(&self) -> &Token {
@@ -346,7 +375,7 @@ impl Parser {
     /// flat `ExprKind::If` spine rather than nested `{ }`s.
     fn parse_if_expr(&mut self) -> Result<Expr, ParseError> {
         let if_token = self.expect(TokenKind::If, "`if`")?;
-        let condition = self.parse_expr()?;
+        let condition = self.suppressing_node_literals(Self::parse_expr)?;
         self.expect(TokenKind::LeftBrace, "`{`")?;
         let then_value = self.parse_expr()?;
         self.expect(TokenKind::RightBrace, "`}`")?;
@@ -566,6 +595,7 @@ impl Parser {
             "Bool" => Type::Bool,
             "String" => Type::String,
             "Unit" => Type::Unit,
+            "Node" => Type::Node,
             "List" => {
                 self.expect(TokenKind::Less, "`<`")?;
                 let (inner, _) = self.parse_type()?;
@@ -641,7 +671,7 @@ impl Parser {
 
     fn parse_if_statement(&mut self) -> Result<Stmt, ParseError> {
         let if_token = self.expect(TokenKind::If, "`if`")?;
-        let condition = self.parse_expr()?;
+        let condition = self.suppressing_node_literals(Self::parse_expr)?;
         let then_branch = self.parse_block()?;
         let else_branch = if self.matches(&TokenKind::Else) {
             if self.check(&TokenKind::If) {
@@ -837,7 +867,7 @@ impl Parser {
         let mut args = Vec::new();
         if !self.check(&TokenKind::RightParen) {
             loop {
-                args.push(self.parse_expr()?);
+                args.push(self.allowing_node_literals(Self::parse_expr)?);
                 if !self.matches(&TokenKind::Comma) {
                     break;
                 }
@@ -856,13 +886,55 @@ impl Parser {
 
     fn finish_index(&mut self, object: Expr) -> Result<Expr, ParseError> {
         self.expect(TokenKind::LeftBracket, "`[`")?;
-        let index = self.parse_expr()?;
+        let index = self.allowing_node_literals(Self::parse_expr)?;
         let close = self.expect(TokenKind::RightBracket, "`]`")?;
         let span = Span::new(object.span.start, close.span.end);
         Ok(Expr::new(
             ExprKind::Index {
                 object: Box::new(object),
                 index: Box::new(index),
+            },
+            span,
+        ))
+    }
+
+    /// True when the current token is an `Identifier` immediately
+    /// followed by `:` — the one-token-of-extra-lookahead needed to
+    /// tell a node literal's `name: expr` prop apart from a bare `expr`
+    /// child at the start of an item (milestone 44).
+    fn at_node_prop(&self) -> bool {
+        matches!(self.current().kind, TokenKind::Identifier(_))
+            && matches!(
+                self.tokens.get(self.pos + 1).map(|t| &t.kind),
+                Some(TokenKind::Colon)
+            )
+    }
+
+    /// Parses a `Node` literal's body: `role` and its opening span were
+    /// already consumed by `parse_primary`. Each item is either
+    /// `name: expr` (a prop) or a bare `expr` (a child) — see
+    /// `ExprKind::NodeLiteral`.
+    fn parse_node_literal(&mut self, role: String, role_span: Span) -> Result<Expr, ParseError> {
+        self.expect(TokenKind::LeftBrace, "`{`")?;
+        let mut props = Vec::new();
+        let mut children = Vec::new();
+        while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+            if self.at_node_prop() {
+                let (name, _) = self.expect_identifier()?;
+                self.expect(TokenKind::Colon, "`:`")?;
+                let value = self.parse_expr()?;
+                props.push((name, value));
+            } else {
+                children.push(self.parse_expr()?);
+            }
+        }
+        let close = self.expect(TokenKind::RightBrace, "`}`")?;
+        let span = Span::new(role_span.start, close.span.end);
+        Ok(Expr::new(
+            ExprKind::NodeLiteral {
+                role,
+                props,
+                children,
             },
             span,
         ))
@@ -893,13 +965,20 @@ impl Parser {
             }
             TokenKind::Identifier(name) => {
                 self.advance();
-                Ok(Expr::new(ExprKind::Identifier(name), token.span))
+                if !self.suppress_node_literal && self.check(&TokenKind::LeftBrace) {
+                    self.parse_node_literal(name, token.span)
+                } else {
+                    Ok(Expr::new(ExprKind::Identifier(name), token.span))
+                }
             }
             TokenKind::Fn => self.parse_lambda_expr(),
             TokenKind::If => self.parse_if_expr(),
             TokenKind::LeftParen => {
                 self.advance();
-                let expr = self.parse_expr()?;
+                // `(` is its own unambiguous terminator, so a node
+                // literal is fine here even inside a suppressed `if`
+                // condition — e.g. `if (Foo { a: b }) { ... }`.
+                let expr = self.allowing_node_literals(Self::parse_expr)?;
                 self.expect(TokenKind::RightParen, "`)`")?;
                 Ok(expr)
             }
@@ -908,7 +987,7 @@ impl Parser {
                 let mut elements = Vec::new();
                 if !self.check(&TokenKind::RightBracket) {
                     loop {
-                        elements.push(self.parse_expr()?);
+                        elements.push(self.allowing_node_literals(Self::parse_expr)?);
                         if !self.matches(&TokenKind::Comma) {
                             break;
                         }
@@ -987,6 +1066,20 @@ mod tests {
                 describe_expr(then_value),
                 describe_expr(else_value)
             ),
+            ExprKind::NodeLiteral {
+                role,
+                props,
+                children,
+            } => {
+                let mut parts = vec![role.clone()];
+                for (name, value) in props {
+                    parts.push(format!("{name}: {}", describe_expr(value)));
+                }
+                for child in children {
+                    parts.push(describe_expr(child));
+                }
+                format!("(node {})", parts.join(" "))
+            }
         }
     }
 
@@ -1173,6 +1266,68 @@ mod tests {
             } => {
                 assert_eq!(then_branch.statements.len(), 1);
                 assert_eq!(else_branch.expect("else branch").statements.len(), 1);
+            }
+            other => panic!("expected If, got {other:?}"),
+        }
+    }
+
+    // --- node literals (milestone 44) --------------------------------
+
+    #[test]
+    fn parses_a_node_literal_with_props_and_children() {
+        assert_eq!(
+            expr_str(r#"Button { href: "/docs" "Quickstart" }"#),
+            "(node Button href: \"/docs\" \"Quickstart\")"
+        );
+    }
+
+    #[test]
+    fn parses_nested_node_literals() {
+        assert_eq!(
+            expr_str("Group { Heading { title } Paragraph { tagline } }"),
+            "(node Group (node Heading title) (node Paragraph tagline))"
+        );
+    }
+
+    #[test]
+    fn parses_an_empty_node_literal() {
+        assert_eq!(expr_str("Group {}"), "(node Group)");
+    }
+
+    /// `if <expr> { ... }` puts a `{` immediately after the condition
+    /// with no separator — the same dangling-brace conflict Go's
+    /// grammar has with composite literals in an `if` header. A
+    /// condition that's a bare identifier (`is_valid`) or ends in one
+    /// (`a == b`) must keep meaning what it always did, not misparse as
+    /// the start of a node literal. See `Parser::suppress_node_literal`.
+    #[test]
+    fn an_if_condition_ending_in_a_bare_identifier_is_not_a_node_literal() {
+        let stmt = parse_one_stmt("if a == b { return a } else { return b }");
+        match stmt.kind {
+            StmtKind::If { condition, .. } => {
+                assert_eq!(describe_expr(&condition), "(== a b)");
+            }
+            other => panic!("expected If, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_if_expressions_condition_ending_in_a_bare_identifier_is_not_a_node_literal() {
+        assert_eq!(
+            expr_str("if is_valid { 1 } else { 2 }"),
+            "(if is_valid 1 2)"
+        );
+    }
+
+    /// Inside an explicit `(...)`, `[...]`, or call-argument list — each
+    /// with its own unambiguous closing delimiter — a node literal is
+    /// unaffected by the surrounding `if` condition's suppression.
+    #[test]
+    fn a_node_literal_is_allowed_inside_parens_in_an_if_condition() {
+        let stmt = parse_one_stmt("if (Flag { on: label }) { print(x) }");
+        match stmt.kind {
+            StmtKind::If { condition, .. } => {
+                assert_eq!(describe_expr(&condition), "(node Flag on: label)");
             }
             other => panic!("expected If, got {other:?}"),
         }

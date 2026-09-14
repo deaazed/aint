@@ -179,6 +179,19 @@ fn expected_shape(ty: &Type, variants: Option<&[String]>) -> String {
                 "respond with exactly one variant name of the `{name}` enum and nothing else."
             ),
         },
+        // A UI tree (milestone 44) — the model answers with plain JSON
+        // describing the shape, parsed by `parse_response_text` exactly
+        // like every other type here. `List<Node>` isn't covered: no
+        // `Type::List(_)` case exists in this function for any element
+        // type yet, a pre-existing, documented gap this doesn't widen.
+        Type::Node => "respond with a single JSON object with exactly these keys: \
+            \"role\" (a short PascalCase string naming what kind of UI element this is \
+            — for example Heading, Paragraph, Group, Button, Link, List, or Image), \
+            \"props\" (a JSON object of string key/value pairs, e.g. {\"href\": \"/docs\"} \
+            — use {} if there are none), and \"children\" (a JSON array where each item \
+            is either a plain string of text content or another object with this same \
+            role/props/children shape). Respond with the JSON object and nothing else."
+            .to_string(),
         other => format!("respond with a value of type {other} and nothing else."),
     }
 }
@@ -217,10 +230,56 @@ fn parse_response_text(text: &str, ty: &Type, span: Span) -> Result<Value, Runti
         }
         Type::String => Ok(Value::String(trimmed.to_string())),
         Type::Enum(name) => Ok(Value::Enum(name.clone(), trimmed.to_string())),
+        Type::Node => {
+            let raw: RawNode =
+                serde_json::from_str(trimmed).map_err(|err| RuntimeError::ModelError {
+                    message: format!("expected a Node JSON object, got {trimmed:?} ({err})"),
+                    span,
+                })?;
+            Ok(raw.into_value())
+        }
         other => Err(RuntimeError::ModelError {
             message: format!("HttpModel does not support responses of type {other}"),
             span,
         }),
+    }
+}
+
+/// The wire shape `expected_shape`'s `Type::Node` prompt asks the model
+/// for — deliberately a separate, permissive type from `Value::Node`
+/// (a `BTreeMap` for deterministic, sorted prop order; `#[serde(default)]`
+/// so an empty `props`/`children` needn't be spelled out) rather than
+/// implementing `Deserialize` on the runtime type directly.
+#[derive(Deserialize)]
+struct RawNode {
+    role: String,
+    #[serde(default)]
+    props: std::collections::BTreeMap<String, String>,
+    #[serde(default)]
+    children: Vec<RawChild>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawChild {
+    Text(String),
+    Node(RawNode),
+}
+
+impl RawNode {
+    fn into_value(self) -> Value {
+        Value::Node {
+            role: self.role,
+            props: self.props.into_iter().collect(),
+            children: self
+                .children
+                .into_iter()
+                .map(|child| match child {
+                    RawChild::Text(text) => Value::String(text),
+                    RawChild::Node(node) => node.into_value(),
+                })
+                .collect(),
+        }
     }
 }
 
@@ -325,6 +384,36 @@ mod tests {
         let model = HttpModel::new(base_url, "test-model");
         let outcome = model.infer(request(Type::Int)).await.unwrap();
         assert_eq!(outcome, InferenceOutcome::Answer(Value::Int(42)));
+    }
+
+    #[tokio::test]
+    async fn parses_a_node_answer() {
+        let node_json = r#"{"role":"Heading","props":{},"children":["hi"]}"#;
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": node_json}}]
+        })
+        .to_string();
+        let base_url = start_mock_server(http_ok(&body));
+        let model = HttpModel::new(base_url, "test-model");
+        let outcome = model.infer(request(Type::Node)).await.unwrap();
+        assert_eq!(
+            outcome,
+            InferenceOutcome::Answer(Value::Node {
+                role: "Heading".to_string(),
+                props: vec![],
+                children: vec![Value::String("hi".to_string())],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_malformed_node_answer_is_a_clear_model_error() {
+        let base_url = start_mock_server(http_ok(
+            r#"{"choices":[{"message":{"content":"not json"}}]}"#,
+        ));
+        let model = HttpModel::new(base_url, "test-model");
+        let err = model.infer(request(Type::Node)).await.unwrap_err();
+        assert!(matches!(err, RuntimeError::ModelError { .. }));
     }
 
     #[tokio::test]
