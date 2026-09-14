@@ -68,40 +68,67 @@ modernized rewrite of a whole file — the kind of broader restructuring
 Tier 1 can't safely automate. The verification bar is the load-bearing
 design decision here:
 
-**Only ever attempted on a file with at least one `test` block.** A
-file's own tests are the one real, pre-existing behavioral oracle
-`aint migrate` has — re-running them before and after a proposed
-rewrite and requiring byte-for-byte identical outcomes (same test
-names, same pass/fail, same error text on failure) is a genuine
-regression check, not a hope. A file with no test blocks has no such
-oracle: type-checking alone can't catch a subtly-wrong-but-well-typed
-rewrite, and actually *running* an arbitrary file to compare output
-risks hanging forever on a blocking top-level statement (`await
-http_serve(...)`) — a real, live risk this design refuses to take. Such
-a file is reported as skipped, not silently left alone with no
-explanation, and — since there's nothing to verify against — the model
-is never even called for it, which also means it never spends a
-quota-limited request on a file `migrate` was never going to be able to
-trust anyway.
+**Only ever attempted where a real behavioral oracle exists.** A file's
+own tests, re-run before and after a proposed rewrite and required to
+match byte-for-byte (same test names, same pass/fail, same error text
+on failure), is that oracle — a genuine regression check, not a hope.
+Type-checking alone can't catch a subtly-wrong-but-well-typed rewrite,
+and actually *running* an arbitrary file to compare output risks
+hanging forever on a blocking top-level statement (`await
+http_serve(...)`) — a real, live risk this design refuses to take.
 
-For a file that does qualify:
+**The oracle doesn't have to live in the file being migrated.**
+`aint-loader` forbids a `test` block in any file reached through
+`import "..." as ...`, so a shared library file (the most common,
+highest-value migration target — `layout.an`-shaped files exist
+specifically because a project split its markup-building helpers out
+for reuse) can *never* carry its own test block. Real coverage for one
+lives in a companion file that imports it and tests it externally — the
+same shape `examples/router/router_test.an`/`examples/
+customer_support/priority_logic_test.an` already use in this project.
+`aint migrate` recognizes this: a file with no test blocks of its own
+is still eligible if some *other* file in the batch imports it and has
+test blocks. A file with no coverage anywhere in the batch is reported
+as skipped, not silently left alone with no explanation, and — since
+there's nothing to verify against — the model is never even called for
+it, which also means it never spends a quota-limited request on a file
+`migrate` was never going to be able to trust anyway.
 
-1. Capture baseline test outcomes from the file's current on-disk
-   content (post-Tier-1, if Tier 1 already changed it).
-2. Ask the model for a modernized rewrite of the whole file
+**Verification is whole-batch, not just the one file that changed** —
+the second load-bearing correction found by actually dogfooding this
+against a real multi-file project (`aint-website`). A proposal could
+change a function's signature, pass its *own* file's type-check (or
+even its own tests, if it happens to have none), and silently break
+every importer elsewhere in the project — a single-file check can't see
+that. So before any run starts, `aint migrate --ai` captures a baseline
+(type-check status, and test outcomes where they exist) for *every*
+file in the batch, once, from each file's pre-migration content. Then,
+for a file that qualifies:
+
+1. Ask the model for a modernized rewrite of the whole file
    (`MIGRATE_SYSTEM_PROMPT`: the current grammar, including `Node`
    literals, explicit instructions to preserve behavior exactly and
    only reach for a rewrite where the older code is clearly expressing
    something the newer syntax says more directly).
-3. If the proposal doesn't parse: reject, file unchanged.
-4. Otherwise, write it, then re-verify: type-check (same loader
-   pipeline), then re-capture test outcomes and compare against the
-   baseline.
-5. Any mismatch — doesn't type-check, or even one test's outcome
-   differs — reverts the file to what it was immediately before this
-   attempt and reports why, in full: the file is never left
-   half-migrated or silently kept in a state nobody checked.
-6. Only a proposal that clears every gate is kept.
+2. If the proposal doesn't parse: reject, file unchanged.
+3. Otherwise, write it, then re-verify: type-check the changed file
+   (same loader pipeline), re-capture its own test outcomes and compare
+   against its baseline, *and* re-verify every other file in the batch
+   against its own baseline the same way.
+4. Any mismatch anywhere — the changed file no longer type-checks or
+   its own tests differ, or any *other* file in the batch now fails to
+   type-check or has different test outcomes — reverts the changed file
+   to what it was immediately before this attempt and reports why,
+   naming the broken file if it wasn't the one being migrated: nothing
+   is ever left half-migrated or silently kept in a state nobody
+   checked.
+5. Only a proposal that clears every gate, for every file in the batch,
+   is kept.
+
+Tier 1 doesn't need any of this — it never changes a signature, so
+per-file, independent verification is already sufficient (see Tier 1's
+own reasoning above). This machinery exists specifically because Tier
+2's rewrite isn't provably safe by construction the way Tier 1's is.
 
 ## CLI
 

@@ -27,6 +27,7 @@
 //!
 //! See `docs/milestones/45-migrate/SPEC.md`.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -82,14 +83,40 @@ pub fn migrate(path: &Path, ai: bool, check_only: bool) -> ExitCode {
         None
     };
 
+    // Captured once, from every file's pre-migration content, before
+    // any write anywhere in the batch — the cross-file regression
+    // oracle `attempt_ai_migration` checks every other file against
+    // after tentatively accepting a proposal. Tier 1 doesn't need this
+    // (it never changes a signature, so a caller's type-checking can't
+    // be affected — see `crates/migrate`'s own doc comment); Tier 2
+    // does, since an AI proposal could otherwise change a function's
+    // signature, pass its own file's check, and silently break every
+    // importer elsewhere in the project. See
+    // `docs/milestones/45-migrate/SPEC.md`.
+    let batch_baselines: HashMap<PathBuf, Result<TestOutcomes, String>> =
+        if let Some(runtime) = &runtime {
+            step("establishing a whole-project baseline for AI-assisted verification".to_string());
+            files
+                .iter()
+                .map(|f| (f.clone(), capture_test_outcomes(f, runtime)))
+                .collect()
+        } else {
+            HashMap::new()
+        };
+
     let mut changed = 0usize;
     let mut unchanged = 0usize;
     let mut bugs = 0usize;
 
     for file in &files {
         step(format!("scanning {}", file.display()));
-        let (outcome, notes) =
-            migrate_file(file, check_only, ai_client.as_ref().zip(runtime.as_ref()));
+        let (outcome, notes) = migrate_file(
+            file,
+            check_only,
+            ai_client.as_ref().zip(runtime.as_ref()),
+            &files,
+            &batch_baselines,
+        );
         for note in &notes {
             warn_line(format!("  {}: {note}", file.display()));
         }
@@ -156,6 +183,8 @@ fn migrate_file(
     path: &Path,
     check_only: bool,
     ai: Option<(&aint_runtime::ChatClient, &tokio::runtime::Runtime)>,
+    files: &[PathBuf],
+    batch_baselines: &HashMap<PathBuf, Result<TestOutcomes, String>>,
 ) -> (FileOutcome, Vec<String>) {
     let mut notes = Vec::new();
     let mut descriptions = Vec::new();
@@ -217,22 +246,15 @@ fn migrate_file(
     }
 
     if let Some((client, runtime)) = ai {
-        let has_test_block = aint_parser::parse_source(&current_text)
-            .map(|program| {
-                program
-                    .statements
-                    .iter()
-                    .any(|stmt| matches!(stmt.kind, StmtKind::Test { .. }))
-            })
-            .unwrap_or(false);
-
-        if !has_test_block {
+        if !has_verifiable_coverage(path, &current_text, files) {
             notes.push(
-                "skipped AI-assisted modernization: no test blocks to verify a rewrite against"
+                "skipped AI-assisted modernization: no test blocks (in this file or a companion \
+                 file that imports it) to verify a rewrite against"
                     .to_string(),
             );
         } else {
-            match attempt_ai_migration(path, &current_text, client, runtime) {
+            match attempt_ai_migration(path, &current_text, client, runtime, files, batch_baselines)
+            {
                 AiOutcome::Accepted => {
                     descriptions.push(
                         "AI-assisted modernization applied, verified against this file's own tests"
@@ -254,22 +276,93 @@ fn migrate_file(
     }
 }
 
+/// Whether *some* file in the batch gives `attempt_ai_migration` a
+/// real oracle to check a proposal for `path` against: `path`'s own
+/// test blocks, if it has any, or — since `aint-loader` forbids a
+/// `test` block in any file reached through `import "..." as ...`, so
+/// a shared library file can never have its own — a companion file in
+/// the batch that imports `path` and has test blocks of its own (the
+/// same shape `examples/router/router_test.an`/`examples/
+/// customer_support/priority_logic_test.an` already use in this
+/// project). The actual before/after comparison for that companion
+/// file happens in `verify_batch_unaffected`, not here — this only
+/// decides whether attempting AI migration is safe to try at all.
+fn has_verifiable_coverage(path: &Path, current_text: &str, files: &[PathBuf]) -> bool {
+    if has_test_block(current_text) {
+        return true;
+    }
+    files.iter().any(|other| {
+        other != path
+            && imports_file(other, path)
+            && fs::read_to_string(other)
+                .map(|text| has_test_block(&text))
+                .unwrap_or(false)
+    })
+}
+
+fn has_test_block(text: &str) -> bool {
+    aint_parser::parse_source(text)
+        .map(|program| {
+            program
+                .statements
+                .iter()
+                .any(|stmt| matches!(stmt.kind, StmtKind::Test { .. }))
+        })
+        .unwrap_or(false)
+}
+
+/// Whether `candidate`'s own `import "..." as alias` statements
+/// (resolved relative to `candidate`'s directory, the same way
+/// `aint-loader` resolves them) reach `target`.
+fn imports_file(candidate: &Path, target: &Path) -> bool {
+    let Ok(text) = fs::read_to_string(candidate) else {
+        return false;
+    };
+    let Ok(program) = aint_parser::parse_source(&text) else {
+        return false;
+    };
+    let Some(dir) = candidate.parent() else {
+        return false;
+    };
+    program.statements.iter().any(|stmt| match &stmt.kind {
+        StmtKind::ImportFile { path, .. } => same_file(&dir.join(path), target),
+        _ => false,
+    })
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 enum AiOutcome {
     Accepted,
     Rejected(String),
 }
 
 /// Asks the model to modernize `current_text`, and only ever keeps the
-/// result if it parses, type-checks, and this file's own tests produce
-/// exactly the same pass/fail outcomes before and after — reverting to
-/// `current_text` the instant any of those doesn't hold.
+/// result if it parses, type-checks, this file's own tests produce
+/// exactly the same pass/fail outcomes before and after, *and* no
+/// other file in `files` regresses — reverting to `current_text` the
+/// instant any of those doesn't hold. The whole-batch check matters
+/// specifically because a proposal could change a function's
+/// signature, pass its own file's check, and silently break an
+/// importer elsewhere in the project; `batch_baselines` (captured once,
+/// before any write in this run) is what catches that.
 fn attempt_ai_migration(
     path: &Path,
     current_text: &str,
     client: &aint_runtime::ChatClient,
     runtime: &tokio::runtime::Runtime,
+    files: &[PathBuf],
+    batch_baselines: &HashMap<PathBuf, Result<TestOutcomes, String>>,
 ) -> AiOutcome {
-    let baseline = match capture_test_outcomes(path, runtime) {
+    let Some(baseline) = batch_baselines.get(path) else {
+        return AiOutcome::Rejected("no baseline was established for this file".to_string());
+    };
+    let baseline = match baseline {
         Ok(outcomes) => outcomes,
         Err(reason) => {
             return AiOutcome::Rejected(format!("could not establish a baseline: {reason}"))
@@ -290,15 +383,17 @@ fn attempt_ai_migration(
         return AiOutcome::Rejected(format!("could not write the proposal: {err}"));
     }
 
-    let verdict = verify_type_checks(path).and_then(|()| {
-        let after = capture_test_outcomes(path, runtime)
-            .map_err(|reason| format!("could not re-run tests: {reason}"))?;
-        if after == baseline {
-            Ok(())
-        } else {
-            Err("it changed at least one test's outcome".to_string())
-        }
-    });
+    let verdict = verify_type_checks(path)
+        .and_then(|()| {
+            let after = capture_test_outcomes(path, runtime)
+                .map_err(|reason| format!("could not re-run tests: {reason}"))?;
+            if &after == baseline {
+                Ok(())
+            } else {
+                Err("it changed at least one test's outcome".to_string())
+            }
+        })
+        .and_then(|()| verify_batch_unaffected(path, files, batch_baselines, runtime));
 
     match verdict {
         Ok(()) => AiOutcome::Accepted,
@@ -306,6 +401,48 @@ fn attempt_ai_migration(
             let _ = fs::write(path, current_text);
             AiOutcome::Rejected(reason)
         }
+    }
+}
+
+/// Re-verifies every file in the batch *other than* `changed_path`
+/// against its own pre-migration baseline — the check that makes it
+/// safe to `--ai`-migrate a file other files import, by catching a
+/// signature change (or any other cross-file behavior change) the
+/// changed file's own verification can't see.
+fn verify_batch_unaffected(
+    changed_path: &Path,
+    files: &[PathBuf],
+    batch_baselines: &HashMap<PathBuf, Result<TestOutcomes, String>>,
+    runtime: &tokio::runtime::Runtime,
+) -> Result<(), String> {
+    for other in files {
+        if other == changed_path {
+            continue;
+        }
+        let Some(baseline) = batch_baselines.get(other) else {
+            continue;
+        };
+        let now = capture_test_outcomes(other, runtime);
+        if &now != baseline {
+            return Err(format!(
+                "it broke {} (was {}, now {})",
+                other.display(),
+                describe_baseline(baseline),
+                describe_baseline(&now)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn describe_baseline(result: &Result<TestOutcomes, String>) -> String {
+    match result {
+        Ok(outcomes) if outcomes.is_empty() => "type-checking cleanly".to_string(),
+        Ok(outcomes) => {
+            let failed = outcomes.iter().filter(|(_, r)| r.is_err()).count();
+            format!("{} test(s) with {failed} failing", outcomes.len())
+        }
+        Err(reason) => format!("not type-checking ({reason})"),
     }
 }
 

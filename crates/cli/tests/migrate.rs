@@ -121,7 +121,7 @@ fn a_file_with_no_test_blocks_skips_the_ai_tier_without_calling_the_model() {
     assert_eq!(contents, original);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("no test blocks to verify a rewrite against"),
+        stderr.contains("no test blocks") && stderr.contains("to verify a rewrite against"),
         "stderr: {stderr}"
     );
 }
@@ -146,6 +146,33 @@ fn http_ok(json_body: &str) -> String {
         json_body.len(),
         json_body
     )
+}
+
+/// Serves one response per connection from `raw_responses`, in order —
+/// for a scenario where more than one file is independently eligible
+/// for AI-assisted migration in the same run (each gets its own call).
+fn start_mock_server_sequence(raw_responses: Vec<String>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind a local port");
+    let addr = listener.local_addr().expect("failed to read local addr");
+    std::thread::spawn(move || {
+        for raw_response in raw_responses {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 65536];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(raw_response.as_bytes());
+                let _ = stream.flush();
+            }
+        }
+    });
+    format!("http://{addr}")
+}
+
+fn an_response(source: &str) -> String {
+    let escaped = source
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n");
+    format!(r#"{{"choices":[{{"message":{{"content":"```an\n{escaped}```"}}}}]}}"#)
 }
 
 #[test]
@@ -234,4 +261,94 @@ fn migrating_a_directory_walks_every_an_file_recursively() {
     assert!(a_contents.contains("return if true"), "got: {a_contents}");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("2 scanned, 1 migrated, 1 unchanged"));
+}
+
+/// `aint-loader` forbids a `test` block in any file reached through
+/// `import "..." as ...`, so a shared library file can never carry its
+/// own — real coverage for one only ever lives in a companion file
+/// that imports it and tests it externally (the same shape
+/// `examples/router/router_test.an` already uses in the real project).
+/// A library file with no tests of its own but a tested companion must
+/// still be attempted, not skipped.
+fn library_and_companion_test(dir: &std::path::Path, lib_body: &str) {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("lib.an"), lib_body).unwrap();
+    std::fs::write(
+        dir.join("caller.an"),
+        "import \"./lib.an\" as lib\ntest \"uses double\" {\nassert lib_double(3) == 6\n}\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_library_file_with_no_tests_of_its_own_is_still_eligible_via_a_companion_test_file() {
+    let dir =
+        std::env::temp_dir().join(format!("aint_migrate_companion_ok_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let lib_original = "fn double(n: Int) -> Int {\nreturn n * 2\n}\n";
+    library_and_companion_test(&dir, lib_original);
+
+    // caller.an is scanned first (alphabetical) and has its own test
+    // block, so it gets its own AI attempt too - answered with itself,
+    // verbatim, so it's a behavioral no-op and the interesting proposal
+    // (for lib.an) is the second response served.
+    let caller_verbatim = std::fs::read_to_string(dir.join("caller.an")).unwrap();
+    let lib_proposal = "fn double(x: Int) -> Int {\nreturn x * 2\n}\n"; // cosmetic rename only
+    let base_url = start_mock_server_sequence(vec![
+        http_ok(&an_response(&caller_verbatim)),
+        http_ok(&an_response(lib_proposal)),
+    ]);
+
+    let output = run_migrate(&["--ai", dir.to_str().unwrap()], Some(&base_url));
+    let lib_contents = std::fs::read_to_string(dir.join("lib.an")).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        lib_contents.contains("fn double(x: Int)"),
+        "lib.an should have been eligible and accepted via its companion test file, got: {lib_contents}"
+    );
+}
+
+#[test]
+fn an_ai_proposal_that_breaks_an_importer_is_rejected_even_though_that_files_own_check_passed() {
+    let dir =
+        std::env::temp_dir().join(format!("aint_migrate_companion_bad_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let lib_original = "fn double(n: Int) -> Int {\nreturn n * 2\n}\n";
+    library_and_companion_test(&dir, lib_original);
+
+    // The proposal for lib.an keeps the same name/signature (so lib.an
+    // alone, which has no tests of its own, has nothing to catch this)
+    // but changes the multiplier - caller.an's test (untouched, still
+    // asserting the *old* behavior) must catch it via the whole-batch
+    // check.
+    let caller_verbatim = std::fs::read_to_string(dir.join("caller.an")).unwrap();
+    let lib_bad_proposal = "fn double(n: Int) -> Int {\nreturn n * 3\n}\n";
+    let base_url = start_mock_server_sequence(vec![
+        http_ok(&an_response(&caller_verbatim)),
+        http_ok(&an_response(lib_bad_proposal)),
+    ]);
+
+    let output = run_migrate(&["--ai", dir.to_str().unwrap()], Some(&base_url));
+    let lib_contents = std::fs::read_to_string(dir.join("lib.an")).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+
+    assert!(
+        output.status.success(),
+        "a rejected AI proposal isn't itself a hard failure"
+    );
+    assert_eq!(
+        lib_contents, lib_original,
+        "lib.an must revert to its original content once caller.an's test would break"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("caller.an") || stderr.contains("broke"),
+        "expected the rejection reason to name the broken importer, stderr: {stderr}"
+    );
 }

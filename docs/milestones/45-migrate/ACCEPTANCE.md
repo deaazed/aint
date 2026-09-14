@@ -33,20 +33,33 @@ test-verified tier into the CLI.
       `aint-migrate`-bug failure on the — never observed — chance that
       fails).
 - [x] `--ai`: proposes a whole-file rewrite via `ChatClient`, but only
-      for a file with at least one `test` block — the one case with a
-      real before/after behavioral oracle. A file with no test blocks
-      is reported as skipped and the model is never called for it
-      (verified directly: a test points `AINT_MODEL_URL` at a listener
-      that never accepts a connection, which would hang the test
-      forever if a call were ever attempted — it isn't, and the test
-      finishes immediately).
-- [x] An accepted AI proposal is verified by capturing this file's own
-      test outcomes before and after, requiring an exact match
-      (test-for-test, pass/fail, error text) in addition to
-      type-checking — verified with a real mock server returning a
-      behaviorally-identical proposal (accepted) and, separately, one
-      that's well-typed but behaviorally wrong (rejected, file reverted
-      to exactly what it was before the attempt).
+      where a real before/after behavioral oracle exists — the file's
+      own test blocks, or (found by dogfooding against `aint-website`
+      itself: `aint-loader` forbids a `test` block in any file reached
+      through `import`, so a shared library file can never carry its
+      own) a companion file in the batch that imports it and has tests.
+      A file with no coverage anywhere in the batch is reported as
+      skipped and the model is never called for it (verified directly:
+      a test points `AINT_MODEL_URL` at a listener that never accepts a
+      connection, which would hang the test forever if a call were ever
+      attempted — it isn't, and the test finishes immediately).
+- [x] An accepted AI proposal is verified by capturing test outcomes
+      before and after — the changed file's own, *and every other file
+      in the batch's* — requiring an exact match (test-for-test,
+      pass/fail, error text) in addition to type-checking, for all of
+      them, not just the one that changed. This whole-batch check is
+      what makes it safe to `--ai`-migrate a file other files import:
+      a proposal that changes a function's signature could otherwise
+      pass its own file's check while silently breaking an importer.
+      Verified with four scenarios against real mock servers: a
+      behaviorally-identical same-file proposal (accepted); a
+      well-typed but behaviorally-wrong same-file proposal (rejected,
+      reverted); a library file with no tests of its own but a tested
+      companion (still attempted, accepted); and — the critical case —
+      a library-file proposal that keeps the same signature (so the
+      library file's own check sees nothing wrong) but changes behavior
+      in a way that breaks an *importing* file's test (rejected,
+      reverted, the importer's own file named in the reason).
 - [x] `--check`: reports what would change without writing anything,
       exits non-zero if anything would — the same convention `aint fmt
       --check` already established. Skips the AI tier entirely (stated
@@ -60,13 +73,17 @@ test-verified tier into the CLI.
       non-blocking file, `aint test`'s pass/fail summary identical
       across all 36 files, zero mismatches either way. See `SPEC.md`'s
       verification section for the exact methodology.
-- [x] `crates/cli/tests/migrate.rs` (new, 8 tests): deterministic
-      rewrite through the real binary, an already-modern file reported
+- [x] `crates/cli/tests/migrate.rs` (10 tests): deterministic rewrite
+      through the real binary, an already-modern file reported
       unchanged and left untouched, `--check`'s no-write/non-zero-exit
       contract, `--ai` without `AINT_MODEL_URL` failing clearly, the
-      no-test-blocks skip (proven via the hanging-listener technique
-      above), an accepted AI proposal, a rejected-and-reverted one, and
-      directory walking.
+      no-coverage-anywhere skip (proven via the hanging-listener
+      technique above), an accepted same-file AI proposal, a
+      rejected-and-reverted same-file one, directory walking, a
+      library file made eligible by a companion test file, and a
+      library-file proposal rejected specifically because it broke the
+      companion file's test — the whole-batch check's own reason for
+      existing.
 - [x] `cargo test --workspace`, `cargo clippy --workspace --all-targets`,
       and `cargo fmt --check` all clean.
 
@@ -83,12 +100,16 @@ test-verified tier into the CLI.
 - **Only two deterministic patterns exist.** Real, but small and
   contained to extend later — see `SPEC.md`'s "Explicitly out of
   scope."
-- **A file with no test blocks can never receive AI-assisted
-  modernization**, even if it would clearly benefit (the `layout.an`-
-  style hand-built-HTML case named back in milestone 44's own
-  retrospective). This is a deliberate safety boundary, not an
-  oversight — adding test coverage to such a file first, then
-  `--ai`-migrating it, is the intended path.
+- **A file with no coverage anywhere in the batch (itself or a
+  companion) can never receive AI-assisted modernization** — a
+  deliberate safety boundary, not an oversight. Real dogfooding against
+  `aint-website` found the first version of this boundary too narrow
+  (it only checked the file itself, which — given `aint-loader`'s
+  no-test-blocks-in-an-imported-file rule — meant a shared library file
+  like `layout.an` could *never* qualify, companion test file or not)
+  and fixed it before it shipped as the actual behavior; see the
+  "companion file" and "whole-batch verification" acceptance criteria
+  above.
 
 ## Explicitly out of scope
 
@@ -99,11 +120,15 @@ See `SPEC.md`'s "Explicitly out of scope."
 Satisfied. `aint migrate` delivers "no regression" as a real,
 verified guarantee rather than a hope: Tier 1 is behavior-preserving
 by construction and re-checked before being kept; Tier 2 is only ever
-applied where a genuine before/after oracle exists and is discarded
-the instant it doesn't hold. The claim was tested against this
+applied where a genuine before/after oracle exists — the file's own
+tests or a companion file's — and every file in the batch, not just the
+one that changed, is discarded back to its pre-attempt state the
+instant anything regresses. The claim was tested against this
 project's own real codebase, not just synthetic examples, with zero
-mismatches. The quota problem that prompted this milestone is
-addressed through legitimate resilience (retry-with-backoff) and a
-design that doesn't require a live model to deliver its core
-guarantee — not through any attempt to get around a provider's actual
-usage limits.
+mismatches, and the cross-file gap was found and closed by actually
+attempting to migrate a second real project (`aint-website`) before
+calling this done, not by inspection. The quota problem that prompted
+this milestone is addressed through legitimate resilience
+(retry-with-backoff) and a design that doesn't require a live model to
+deliver its core guarantee — not through any attempt to get around a
+provider's actual usage limits.
