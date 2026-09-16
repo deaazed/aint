@@ -154,8 +154,10 @@ one run-on line. `Code { "line one\nline two" }` → `<pre>` with a
 fixed, built-in monospace/preserved-whitespace/horizontal-scroll look
 (`code_decls`) — a real UI concept (preformatted/code text), not a CSS
 one: no `white-space`/`font-family` value ever appears in an AINT
-program. Verified directly:
-`code_preserves_newlines_and_uses_a_monospace_font`.
+program. `padding`/`background`/`corner_radius`/`size` are still
+ordinary style props, same as `Box`/`Text`. Verified directly:
+`code_preserves_newlines_and_uses_a_monospace_font`,
+`code_accepts_a_size_prop_like_text_and_heading_do`.
 
 ## A design wrinkle worth naming
 

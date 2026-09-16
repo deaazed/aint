@@ -533,6 +533,9 @@ fn code_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
     if let Some(r) = px(props, "corner_radius") {
         decls.push(("border-radius", r));
     }
+    if let Some(s) = px(props, "size") {
+        decls.push(("font-size", s));
+    }
     decls
 }
 

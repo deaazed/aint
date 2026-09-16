@@ -2722,6 +2722,15 @@ mod tests {
     }
 
     #[test]
+    fn code_accepts_a_size_prop_like_text_and_heading_do() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Code { size: 13 "x" } }))"#,
+        );
+        assert!(output.contains("font-size:13px"));
+    }
+
+    #[test]
     fn an_unrecognized_input_kind_is_a_render_error() {
         let err = run_expect_err(
             r#"import ui
