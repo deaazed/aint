@@ -2677,6 +2677,40 @@ mod tests {
     }
 
     #[test]
+    fn a_form_submits_a_real_get_request_carrying_a_named_text_input() {
+        // Not client-side interactivity - a plain HTML form doing a
+        // full-page navigation, the mechanism a live "type a message,
+        // get a real answer" page needs.
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Form { action: "/try"
+                       Input { kind: "text" name: "message" placeholder: "say something" required: true }
+                       Button { "Go" }
+                   }
+               }))"#,
+        );
+        assert!(output.contains("<form method=\"get\" action=\"/try\">"));
+        assert!(output.contains("name=\"message\" placeholder=\"say something\" required>"));
+        assert!(output.contains("</form>"));
+    }
+
+    #[test]
+    fn a_text_inputs_value_is_html_escaped_and_a_checkbox_gets_no_box_styling() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Input { kind: "text" name: "q" value: "<x>" }
+                       Input { kind: "checkbox" id: "c" }
+                   }
+               }))"#,
+        );
+        assert!(output.contains("value=\"&lt;x&gt;\""));
+        assert!(output.contains("<input type=\"checkbox\" id=\"c\">"));
+    }
+
+    #[test]
     fn an_unrecognized_input_kind_is_a_render_error() {
         let err = run_expect_err(
             r#"import ui

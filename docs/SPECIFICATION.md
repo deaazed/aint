@@ -367,7 +367,10 @@ same style props as `Box` — an unstyled `Button` gets a built-in
 default look; an unstyled `Link` is a plain hyperlink; a `Link` with
 `padding`/`background` set looks like a button without being a
 separate mode), `Image` (`src`/`alt`/`width`/`height`), `Input`
-(`kind`/`id`), `Label` (`target`), `List`. Every size prop is a
+(`kind`/`id`/`name`/`placeholder`/`value`/`required`), `Label`
+(`target`), `List`, `Form` (`action`/`method` — a real GET/POST
+submission, not client-side interactivity, added migrating a real site
+onto this design). Every size prop is a
 unit-less number (`padding: 24`, not `padding: "24px"`); a color prop
 is either a literal CSS color or one of the active theme's palette
 field names, resolved to `var(--...)` so the same generated class

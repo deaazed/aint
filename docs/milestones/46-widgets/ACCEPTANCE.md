@@ -119,6 +119,32 @@ tag-name fallback anywhere in the authoring surface.
   API shape today and will fail to type-check against this milestone's
   stdlib until that follow-up happens.
 
+## Addendum — `Form`, found migrating a real site onto this
+
+Migrating `aint-website`'s live "Try it" page (a real GET-form
+submission carrying a message to classify, not client-side JS) surfaced
+a genuine v1 gap: no widget could produce a `<form>` at all. Added
+directly, the same size class as milestone 44/45's own dogfooding-found
+additions:
+
+- **`Form { action: "..." method: "get" children }`** → `<form
+  method="get|post" action="...">...</form>`. `method` is clamped to
+  `"get"`/`"post"` — the only two an HTML form itself supports — rather
+  than passed through verbatim.
+- **`Input` gained `name`/`placeholder`/`value`/`required`** — `value`
+  HTML-escaped like every other text-bearing attribute; `required` is a
+  bare boolean prop, emitting the bare HTML attribute when `true`.
+- **A text-shaped `Input` gained its own default box styling**
+  (padding/border/radius, overridable by the same props `Box` takes) —
+  previously `Input` had no generated class at all, which looked fine
+  for a bare checkbox but wrong for a real text field. A `checkbox`
+  `Input` still gets none of this, deliberately — see `input_decls`'s
+  doc comment.
+
+Verified directly: `a_form_submits_a_real_get_request_carrying_a_named_
+text_input`, `a_text_inputs_value_is_html_escaped_and_a_checkbox_gets_
+no_box_styling` (`crates/runtime/src/interpreter.rs`).
+
 ## A design wrinkle worth naming
 
 `SPEC.md`'s own prose described `Page`'s `theme` and `Responsive`'s

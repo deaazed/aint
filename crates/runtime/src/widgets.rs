@@ -349,9 +349,10 @@ fn render_widget(
                 )),
                 "Link" => Ok(render_link(props, sheet, &inner)),
                 "Image" => Ok(render_image(props)),
-                "Input" => render_input(props, span),
+                "Input" => render_input(props, sheet, span),
                 "Label" => Ok(render_label(props, &inner)),
                 "List" => Ok(render_list(&rendered_children, sheet)),
+                "Form" => Ok(render_form(props, &inner)),
                 other => Err(RuntimeError::TypeMismatch {
                     message: format!("`{other}` isn't a widget `render` understands"),
                     span,
@@ -599,7 +600,33 @@ const INPUT_KINDS: &[&str] = &[
     "text", "checkbox", "email", "password", "search", "tel", "url", "number",
 ];
 
-fn render_input(props: &[(String, PropValue)], span: Span) -> Result<String, RuntimeError> {
+/// A text-shaped `Input`'s own box styling - the same style props
+/// `Box` takes, with sensible built-in defaults so an unstyled `Input`
+/// still looks like a real text field. A `checkbox` gets none of this:
+/// padding/border on a native checkbox control looks broken, and its
+/// own appearance is meant to stay whatever the browser gives it.
+fn input_decls(kind: &str, props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
+    if kind == "checkbox" {
+        return Vec::new();
+    }
+    let padding = px(props, "padding").unwrap_or_else(|| "10px".to_string());
+    let border = str_prop(props, "border")
+        .and_then(resolve_color)
+        .unwrap_or_else(|| "var(--border)".to_string());
+    let radius = px(props, "corner_radius").unwrap_or_else(|| "6px".to_string());
+    vec![
+        ("padding", padding),
+        ("border", format!("1px solid {border}")),
+        ("border-radius", radius),
+        ("font", "inherit".to_string()),
+    ]
+}
+
+fn render_input(
+    props: &[(String, PropValue)],
+    sheet: &mut Stylesheet,
+    span: Span,
+) -> Result<String, RuntimeError> {
     let kind = str_prop(props, "kind").unwrap_or("text");
     if !INPUT_KINDS.contains(&kind) {
         return Err(RuntimeError::TypeMismatch {
@@ -607,13 +634,29 @@ fn render_input(props: &[(String, PropValue)], span: Span) -> Result<String, Run
             span,
         });
     }
-    let id = str_prop(props, "id").map(escape_html).unwrap_or_default();
-    let id_attr = if id.is_empty() {
+    let mut attrs = String::new();
+    if let Some(id) = str_prop(props, "id") {
+        attrs.push_str(&format!(" id=\"{}\"", escape_html(id)));
+    }
+    if let Some(name) = str_prop(props, "name") {
+        attrs.push_str(&format!(" name=\"{}\"", escape_html(name)));
+    }
+    if let Some(placeholder) = str_prop(props, "placeholder") {
+        attrs.push_str(&format!(" placeholder=\"{}\"", escape_html(placeholder)));
+    }
+    if let Some(value) = str_prop(props, "value") {
+        attrs.push_str(&format!(" value=\"{}\"", escape_html(value)));
+    }
+    if flag(props, "required") {
+        attrs.push_str(" required");
+    }
+    let class = sheet.class_for(input_decls(kind, props), None);
+    let class_attr = if class.is_empty() {
         String::new()
     } else {
-        format!(" id=\"{id}\"")
+        format!(" class=\"{class}\"")
     };
-    Ok(format!("<input type=\"{kind}\"{id_attr}>"))
+    Ok(format!("<input type=\"{kind}\"{class_attr}{attrs}>"))
 }
 
 fn render_label(props: &[(String, PropValue)], inner: &str) -> String {
@@ -626,6 +669,24 @@ fn render_label(props: &[(String, PropValue)], inner: &str) -> String {
         format!(" for=\"{target}\"")
     };
     format!("<label{for_attr}>{inner}</label>")
+}
+
+/// `Form { action: "..." method: "get" children }` - a plain HTML form
+/// submission (a full-page navigation carrying its inputs as a query
+/// string or a POST body), not client-side interactivity; still
+/// squarely in scope for a server-rendered page. `method` defaults to,
+/// and is clamped to, `"get"`/`"post"` - the only two an HTML `<form>`
+/// itself supports.
+fn render_form(props: &[(String, PropValue)], inner: &str) -> String {
+    let method = if str_prop(props, "method") == Some("post") {
+        "post"
+    } else {
+        "get"
+    };
+    let action = str_prop(props, "action")
+        .map(escape_html)
+        .unwrap_or_default();
+    format!("<form method=\"{method}\" action=\"{action}\">{inner}</form>")
 }
 
 fn render_list(rendered_children: &[String], sheet: &mut Stylesheet) -> String {
