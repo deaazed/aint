@@ -19,6 +19,7 @@ mod test_runner;
 mod tool;
 mod trace;
 mod value;
+mod widgets;
 
 pub use chat::ChatClient;
 pub use error::RuntimeError;
@@ -29,5 +30,6 @@ pub use test_runner::{run_tests, TestOutcome};
 pub use tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
 pub use trace::{InferenceTraceOutcome, TokenUsage, TraceRecord};
 pub use value::{
-    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, ToolFn, Value,
+    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, PropValue, ToolFn,
+    Value,
 };

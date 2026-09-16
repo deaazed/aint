@@ -1,40 +1,51 @@
 import ui
+import string
 
 infer tagline(topic: String) -> Node
 
-fn nav_link(label: String, href: String) -> Node {
-    return Button { href: href label }
+fn nav_link(label: String, to: String) -> Node {
+    return Link { to: to label }
 }
 
 fn hero(title: String, links: List<Node>) -> Node {
-    return Group {
-        Heading { title }
-        Group { links }
+    return Column { gap: 16
+        Heading { level: 1 title }
+        Row { gap: 12 links }
     }
 }
 
 fn main() -> Unit {
     let links = [nav_link("Docs", "/docs"), nav_link("Try it", "/try")]
-    print(render_html(hero("AINT", links)))
+    print(render(Page { title: "AINT" description: "a language that types AI, not just calls it"
+        hero("AINT", links)
+    }))
 }
 
 main()
 
 test "a hand-authored tree and an AI-generated node compose and render together" {
-    mock tagline -> Group { Paragraph { "a language that types AI, not just calls it" } }
-    let page = Group {
-        Heading { "AINT" }
+    mock tagline -> Text { "a language that types AI, not just calls it" }
+    let page = Column {
+        Heading { level: 1 "AINT" }
         await tagline("positioning")
     }
-    assert render_html(page) == "<div><h2>AINT</h2><div><p>a language that types AI, not just calls it</p></div></div>"
+    let html = render(Page { title: "AINT" description: "d" page })
+    assert string_contains(html, "<h1")
+    assert string_contains(html, "a language that types AI, not just calls it")
 }
 
-test "a role outside the shorthand renders as its own tag, gracefully" {
-    let section = Section { "beta" }
-    assert render_html(section) == "<section>beta</section>"
+test "identical styling on different widgets shares one generated class" {
+    let html = render(Page { title: "t" description: "d"
+        Row { gap: 8
+            Box { padding: 12 "a" }
+            Box { padding: 12 "b" }
+        }
+    })
+    assert string_contains(html, "<div class=\"w1\">a</div>")
+    assert string_contains(html, "<div class=\"w1\">b</div>")
 }
 
-test "a role that is not a plausible tag name falls back to a labeled div" {
-    let badge = Side_Bar { "beta" }
-    assert render_html(badge) == "<div data-role=\"Side_Bar\">beta</div>"
+test "numeric style props compile to plain pixel values, no unit string written by hand" {
+    let html = render(Page { title: "t" description: "d" Box { padding: 12 "x" } })
+    assert string_contains(html, "padding:12px")
 }

@@ -12,7 +12,7 @@ use crate::error::RuntimeError;
 use crate::interpreter::Interpreter;
 use crate::model::MockModel;
 use crate::tool::MockTool;
-use crate::value::Value;
+use crate::value::{PropValue, Value};
 
 /// One `test` block's result.
 pub struct TestOutcome {
@@ -165,11 +165,14 @@ fn eval_mock_value(
             let mut prop_values = Vec::with_capacity(props.len());
             for (name, value_expr) in props {
                 match eval_mock_value(value_expr, enum_variants)? {
-                    Value::String(s) => prop_values.push((name.clone(), s)),
+                    Value::String(s) => prop_values.push((name.clone(), PropValue::Str(s))),
+                    Value::Int(n) => prop_values.push((name.clone(), PropValue::Num(n as f64))),
+                    Value::Float(n) => prop_values.push((name.clone(), PropValue::Num(n))),
+                    Value::Bool(b) => prop_values.push((name.clone(), PropValue::Bool(b))),
                     other => {
                         return Err(RuntimeError::UnsupportedMockValue {
                             message: format!(
-                                "node prop `{name}` must be a String, found a {}",
+                                "node prop `{name}` must be a String, Int, Float, or Bool, found a {}",
                                 other.type_name()
                             ),
                             span: value_expr.span,

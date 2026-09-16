@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::RuntimeError;
 use crate::model::{InferenceOutcome, InferenceRequest, Model};
-use crate::value::Value;
+use crate::value::{PropValue, Value};
 
 /// A real model reached over HTTP. `base_url` should include any
 /// version prefix the backend expects (e.g. `http://localhost:11434/v1`
@@ -231,18 +231,21 @@ fn expected_shape(ty: &Type, variants: Option<&[String]>) -> String {
                 "respond with exactly one variant name of the `{name}` enum and nothing else."
             ),
         },
-        // A UI tree (milestone 44) — the model answers with plain JSON
-        // describing the shape, parsed by `parse_response_text` exactly
-        // like every other type here. `List<Node>` isn't covered: no
-        // `Type::List(_)` case exists in this function for any element
-        // type yet, a pre-existing, documented gap this doesn't widen.
+        // A widget tree (milestone 46) — the model answers with plain
+        // JSON describing the shape, parsed by `parse_response_text`
+        // exactly like every other type here. `List<Node>` isn't
+        // covered: no `Type::List(_)` case exists in this function for
+        // any element type yet, a pre-existing, documented gap this
+        // doesn't widen.
         Type::Node => "respond with a single JSON object with exactly these keys: \
-            \"role\" (a short PascalCase string naming what kind of UI element this is \
-            — for example Heading, Paragraph, Group, Button, Link, List, or Image), \
-            \"props\" (a JSON object of string key/value pairs, e.g. {\"href\": \"/docs\"} \
-            — use {} if there are none), and \"children\" (a JSON array where each item \
-            is either a plain string of text content or another object with this same \
-            role/props/children shape). Respond with the JSON object and nothing else."
+            \"role\" (a short PascalCase string naming one of these widgets: Column, Row, \
+            Box, Spacer, Responsive, Text, Heading, Button, Link, Image, Input, Label, List, \
+            or Page — never an HTML tag name), \"props\" (a JSON object of key/value pairs \
+            where each value is a JSON string, number, or boolean — e.g. \
+            {\"gap\": 12, \"wrap\": true, \"to\": \"/docs\"} — use {} if there are none), \
+            and \"children\" (a JSON array where each item is either a plain string of text \
+            content or another object with this same role/props/children shape). Respond \
+            with the JSON object and nothing else."
             .to_string(),
         other => format!("respond with a value of type {other} and nothing else."),
     }
@@ -306,9 +309,30 @@ fn parse_response_text(text: &str, ty: &Type, span: Span) -> Result<Value, Runti
 struct RawNode {
     role: String,
     #[serde(default)]
-    props: std::collections::BTreeMap<String, String>,
+    props: std::collections::BTreeMap<String, RawPropValue>,
     #[serde(default)]
     children: Vec<RawChild>,
+}
+
+/// A prop's JSON value, widened in milestone 46 alongside
+/// `PropValue` — a model answers a style prop like `gap` or `wrap` with
+/// a JSON number/boolean directly, not a quoted string.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawPropValue {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+}
+
+impl From<RawPropValue> for PropValue {
+    fn from(raw: RawPropValue) -> Self {
+        match raw {
+            RawPropValue::Str(s) => PropValue::Str(s),
+            RawPropValue::Num(n) => PropValue::Num(n),
+            RawPropValue::Bool(b) => PropValue::Bool(b),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -322,7 +346,7 @@ impl RawNode {
     fn into_value(self) -> Value {
         Value::Node {
             role: self.role,
-            props: self.props.into_iter().collect(),
+            props: self.props.into_iter().map(|(k, v)| (k, v.into())).collect(),
             children: self
                 .children
                 .into_iter()

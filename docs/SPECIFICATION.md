@@ -54,7 +54,7 @@ Tool<T>                — the type of an unawaited tool call
 Enum(name)             — a user-declared enum, compared nominally
 Distribution<T>         — T must be an enum
 fn(T, T, ...) -> T      — a closure's type (milestone 30)
-Node                    — a UI tree: a role, string props, Node/String children (milestone 44)
+Node                    — a widget tree: a role, String/Int/Float/Bool props, Node/String children (milestone 44/46)
 ```
 
 `Task<T>`, `Inference<T>`, and `Tool<T>` are never written as source
@@ -321,11 +321,15 @@ Role { name: expr ... expr expr ... }
 
 `Identifier { ... }` in expression position (milestone 44) builds a
 `Node` value. `Role` is an open-vocabulary string tag, not a declared
-type or enum name — never checked against any registry. Each item
-inside `{ }` is either `name: expr` (a **prop**; `expr` must type to
-`String`) or a bare `expr` (a **child**; must type to `Node`, `String`
-— a text leaf — or `List<Node>`, spliced in as multiple children). No
-commas between items, same as a block's statements.
+type or enum name — never checked against any registry at the type-
+system level (the concrete widget vocabulary `render` recognizes is
+closed — see below). Each item inside `{ }` is either `name: expr` (a
+**prop**; `expr` must type to `String`, `Int`, `Float`, or `Bool` —
+widened from `String`-only in milestone 46 so a widget's own style
+props can be unit-less numbers and bare booleans) or a bare `expr` (a
+**child**; must type to `Node`, `String` — a text leaf — or
+`List<Node>`, spliced in as multiple children). No commas between
+items, same as a block's statements.
 
 This was previously always a parse error — `Identifier` followed
 immediately by `{` never continued into anything, since postfix
@@ -338,29 +342,39 @@ directly, re-enabling it inside any explicitly-delimited
 sub-expression (`(...)`, `[...]`, a call's argument list). See
 `docs/milestones/44-ai-native-ui/SPEC.md`.
 
-`import ui` provides `render_html(node: Node) -> String` — the one
-renderer that exists. A small shorthand of roles maps to specific
-markup (`Heading`→`h2`, `Paragraph`→`p`, `Group`→`div`, `Button`/
-`Link`→`a`/`button`, `List`→`ul`/`li`, `Image`→`img`, `Text`→`span`);
-a role outside that set is used directly as its own tag name (lowercased)
-when it's a plausible one — starts with an ASCII letter, nothing but
-letters and digits after, which covers `h1`-`h6` and any other real
-HTML element the shorthand doesn't special-case — and only degrades to
-`<div data-role="...">` when it isn't. `Raw { ... }` is a role of its
-own: an explicit escape hatch whose direct `String` children are
-emitted verbatim, unescaped (a nested real `Node` inside still escapes
-its own children normally) — the only way to compose an already-built
-markup fragment (an SVG icon, an HTML entity) as a child without it
-being HTML-escaped like ordinary text. Every role also accepts a fixed,
-safe set of extra attributes from its props — `class`, `id`, `title`,
-`target`, `rel`, and `aria_hidden`/`aria_label`/`aria_current` (written
-with an underscore; identifiers can't contain a hyphen, so this is
-translated to one on output) — deliberately not arbitrary prop names as
-arbitrary attribute names, since an AI-generated `Node`'s prop names
-carry no validation of their own. See
-`docs/milestones/44-ai-native-ui/ACCEPTANCE.md`'s addendum for why each
-of these was added — found migrating a real site onto `Node` literals,
-not designed speculatively.
+**`import ui` provides `render(page: Node) -> String`** — the only
+renderer, compiling a `Page`-rooted widget tree to one complete HTML
+document string (doctype, head, a generated stylesheet, body).
+Milestone 44 shipped an HTML-tag-shaped role vocabulary
+(`Group`→`div`, an open tag-name fallback, a `class` prop) and
+milestone 45 added a CSS-shaped second renderer (`style`, `Rule`/
+`Media` roles reading like literal selectors); milestone 46 replaced
+both with a closed, abstract widget vocabulary carrying no HTML tag
+name, CSS property, or selector anywhere in it — `render` rejects any
+role outside that vocabulary rather than falling back to a generic
+tag, at any depth in the tree. See `docs/milestones/46-widgets/SPEC.md`
+and `ACCEPTANCE.md`.
+
+The widgets: `Page` (the document root — `title`/`description` props,
+an optional `Theme` child, one body child), `Theme` (`Light`/`Dark`
+palette children — `accent`/`background`/`surface`/`text`/`border`/
+`on_accent` color props), `Column`/`Row` (`gap`/`align`/`wrap`),
+`Box` (`padding`/`background`/`corner_radius`/`border`/`width`/
+`height`/`grow`), `Spacer`, `Responsive` (`Narrow`/`Wide` children,
+swapped at one fixed 720px breakpoint), `Text`/`Heading`
+(`size`/`weight`/`color`/`level`), `Button`/`Link` (`to`, plus the
+same style props as `Box` — an unstyled `Button` gets a built-in
+default look; an unstyled `Link` is a plain hyperlink; a `Link` with
+`padding`/`background` set looks like a button without being a
+separate mode), `Image` (`src`/`alt`/`width`/`height`), `Input`
+(`kind`/`id`), `Label` (`target`), `List`. Every size prop is a
+unit-less number (`padding: 24`, not `padding: "24px"`); a color prop
+is either a literal CSS color or one of the active theme's palette
+field names, resolved to `var(--...)` so the same generated class
+stays correct across a light/dark switch. `render` deduplicates
+identical resolved styling into one generated CSS class regardless of
+how many widgets use it — an author never writes a class name, a
+selector, or a `<style>` tag.
 
 ## 5. Expressions
 
@@ -498,7 +512,7 @@ ungated.
 | `auth` | `auth_hash_password`/`auth_verify_password` (real `bcrypt`), `auth_generate_token` (real randomness) |
 | `log` | `log_info`, `log_error` — timestamped lines to stderr |
 | `http` | `http_serve(port)` (async) — a hand-rolled HTTP/1.1 server over a raw `TcpListener`, one connection at a time; dispatches every request to a program-defined `handle_request(method: String, path: String, body: String) -> String`; no router (see `docs/milestones/25-real-application/SPEC.md` for why) |
-| `ui` | `render_html(node: Node) -> String` (milestone 44) — the one renderer that exists for a `Node` tree; see §4.10 |
+| `ui` | `render(page: Node) -> String` (milestone 44; replaced in 46) — the only renderer, compiling a `Page`-rooted widget tree to one complete HTML document; see §4.10 |
 
 No `Int`/`String` conversion exists anywhere in the stdlib. `print`
 accepts any value type (via `Display`), which is the only way to

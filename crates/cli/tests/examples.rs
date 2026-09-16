@@ -381,17 +381,18 @@ fn enums_an_prints_and_exits_zero() {
     );
 }
 
-/// `examples/ui_nodes.an` (milestone 44) — a hand-authored `Node` tree
-/// rendered to HTML through the real binary.
+/// `examples/ui_nodes.an` (milestone 44; widget vocabulary replaced in
+/// 46) — a hand-authored widget tree compiled to a full HTML document
+/// through the real binary.
 #[test]
 fn ui_nodes_an_prints_and_exits_zero() {
     let output = run_aint(&example_path("ui_nodes.an"));
     assert!(output.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
-        "<div><h2>AINT</h2><div><a class=\"button\" href=\"/docs\">Docs</a>\
-         <a class=\"button\" href=\"/try\">Try it</a></div></div>\n"
-    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.starts_with("<!doctype html>"));
+    assert!(stdout.contains("<h1 class=\"w1\">AINT</h1>"));
+    assert!(stdout.contains("<a class=\"w2\" href=\"/docs\">Docs</a>"));
+    assert!(stdout.contains("<a class=\"w2\" href=\"/try\">Try it</a>"));
 }
 
 #[test]

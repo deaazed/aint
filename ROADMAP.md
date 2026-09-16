@@ -453,6 +453,47 @@ what actually surfaced the companion-file/whole-batch correction above
 before it ever shipped as the real behavior. See
 `docs/milestones/45-migrate/SPEC.md`.
 
+## 46 — Widgets: no HTML or CSS assumptions — done
+
+Direct pushback on milestone 44/45's whole direction: `Group { class:
+"card" }` plus a `Rule { selector: ".card" ... }` alongside it is HTML
+and CSS wearing a thin disguise, not a real abstraction — "why build a
+language for UI if it still writes HTML." The brief: make AINT's UI
+story unique, easy to write, and easy to understand, the way Flutter's
+widget model is a real abstraction over "a screen," not a wrapper
+around each platform's native views — a full replace, not a layer over
+the old design, confirmed directly before implementation started.
+`Value::Node`'s shape didn't change (milestone 44's own principle held:
+a role vocabulary and a renderer can be swapped out freely, the tree
+itself was never HTML-shaped) — what changed is the vocabulary
+(`Column`/`Row`/`Box`/`Text`/`Heading`/`Button`/`Link`/`Image`/`Input`/
+`Label`/`List`/`Spacer`/`Responsive`/`Page`/`Theme`, closed, no tag-name
+fallback) and the renderer (`render(page: Node) -> String`, the only
+one — `style()` is gone entirely). A widget's own props are its style —
+`Box { padding: 24 background: "surface" }`, colocated, not a separate
+selector-matched stylesheet — which needed one real type-system change:
+a node prop widened from `String`-only to `String | Int | Float | Bool`,
+so a size prop is a unit-less number (`padding: 24`, never `"24px"`) and
+a flag is a bare `Bool` (`wrap: true`). `render` compiles the whole
+tree in one pass: every widget's resolved styling (theme-token colors
+resolved to `var(--...)`, validated literal colors, numeric decls) gets
+deduplicated into one generated CSS class regardless of how many
+widgets share it — an author never writes a class name, a selector, or
+a `<style>` tag. `Theme { Light { ... } Dark { ... } }` generates both a
+`:root` default and a `prefers-color-scheme: dark` override
+automatically; `Responsive { Narrow { ... } Wide { ... } }` renders both
+branches and shows exactly one via the project's one fixed breakpoint.
+The security posture actually simplified, not just moved: milestone
+44/45's blocklist-plus-tag-fallback model (block event-handler prop
+names, block `javascript:` URLs, block a short list of dangerous tags,
+degrade an unrecognized role to a tag name) is gone along with the
+open tag-name fallback that made it necessary — the widget vocabulary
+is closed, so an unrecognized role is a render error everywhere in the
+tree, not a decision about which fallback is safe. See
+`docs/milestones/46-widgets/SPEC.md` and `ACCEPTANCE.md`. Migrating
+`aint-website` onto this is a real, separate follow-up, the same
+sequencing milestone 44 used for its own site migration.
+
 ---
 
 ## Known hard problems, by category

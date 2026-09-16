@@ -43,14 +43,17 @@ pub enum Type {
     /// non-`infer`/`tool` top-level `fn` — see
     /// `docs/milestones/30-closures/SPEC.md`.
     Function(Vec<Type>, Box<Type>),
-    /// A UI tree node (milestone 44): a `role` tag (`"Heading"`,
-    /// `"Group"`, ... — an open vocabulary, not a closed enum, since a
-    /// renderer degrades gracefully on an unrecognized role rather than
-    /// rejecting it), string-valued `props`, and `children` that are
-    /// each `Node` or `String`. The one type both `Identifier { ... }`
-    /// node literals and an `infer`/`tool` declared `-> Node` produce —
-    /// composable in the same tree either way, validated identically.
-    /// See `docs/milestones/44-ai-native-ui/SPEC.md`.
+    /// A widget tree node (milestone 44; the concrete role vocabulary
+    /// and renderer were replaced in milestone 46, but the type stays
+    /// the same one built in 44): a `role` tag (`"Column"`, `"Button"`,
+    /// ... — an open vocabulary at the type-system level, though
+    /// `render` itself now recognizes a closed, widget-shaped set of
+    /// them, not HTML tag names), `props` valued `String`, `Int`,
+    /// `Float`, or `Bool`, and `children` that are each `Node` or
+    /// `String`. The one type both `Identifier { ... }` node literals
+    /// and an `infer`/`tool` declared `-> Node` produce — composable in
+    /// the same tree either way, validated identically. See
+    /// `docs/milestones/46-widgets/SPEC.md`.
     Node,
 }
 

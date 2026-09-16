@@ -52,16 +52,56 @@ pub enum Value {
     /// run, exactly like [`Value::Inference`]. `await` sends it to the
     /// interpreter's `MockTool`.
     ToolCall(Rc<PendingToolCall>),
-    /// A `Node` literal's value (milestone 44): a `role` tag, string
-    /// props, and children each guaranteed — by construction, both from
-    /// `Identifier { ... }` literals and from a validated `infer`/`tool`
-    /// response — to be `Value::Node` or `Value::String`. See
-    /// `docs/milestones/44-ai-native-ui/SPEC.md`.
+    /// A `Node` literal's value (milestone 44; prop values widened from
+    /// `String`-only to `PropValue` in milestone 46 so a widget's own
+    /// style props — `padding: 24`, `wrap: true` — never need a CSS-
+    /// flavored unit string): a `role` tag, props, and children each
+    /// guaranteed — by construction, both from `Identifier { ... }`
+    /// literals and from a validated `infer`/`tool` response — to be
+    /// `Value::Node` or `Value::String`. See
+    /// `docs/milestones/46-widgets/SPEC.md`.
     Node {
         role: String,
-        props: Vec<(String, String)>,
+        props: Vec<(String, PropValue)>,
         children: Vec<Value>,
     },
+}
+
+/// A node prop's value (milestone 46) — widened from milestone 44's
+/// `String`-only props so a widget's own style props can be genuinely
+/// unit-less numbers and bare booleans rather than CSS-flavored strings
+/// (`padding: 24`, not `padding: "24px"`; `wrap: true`, not
+/// `wrap: "true"`). Every prop value in an AINT program still comes
+/// from one of these three literal kinds — see `checker.rs`'s
+/// `NodeLiteral` arm.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropValue {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+}
+
+impl PropValue {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            PropValue::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_num(&self) -> Option<f64> {
+        match self {
+            PropValue::Num(n) => Some(*n),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            PropValue::Bool(b) => Some(*b),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -284,12 +324,17 @@ pub enum NativeFunction {
     /// implemented directly on `Interpreter`, not in `stdlib::call`.
     /// See SPEC.md.
     HttpServe,
-    /// Renders a `Node` tree to an HTML string (milestone 44) — the one
-    /// concrete renderer that exists today, since `http_serve` is
-    /// AINT's only real output surface. `Node` itself never encodes
-    /// HTML/web assumptions, so a second renderer is a new native, not
-    /// a redesign. See `docs/milestones/44-ai-native-ui/SPEC.md`.
-    RenderHtml,
+    /// Compiles a `Page` widget tree to a complete HTML document string
+    /// (milestone 46) — the only renderer, and the only thing anything
+    /// in `import ui` produces. Widgets (`Column`/`Row`/`Box`/`Text`/...)
+    /// are an abstract vocabulary with no HTML tag names or CSS
+    /// properties in it; `render` is where that vocabulary is compiled
+    /// down to markup and a generated stylesheet, in one pass an AINT
+    /// program never sees the inside of. `Node` itself still never
+    /// encodes HTML/web assumptions, so a non-web renderer remains a new
+    /// native over the same value, not a redesign. See
+    /// `docs/milestones/46-widgets/SPEC.md`.
+    Render,
 }
 
 impl Value {
@@ -408,7 +453,7 @@ impl NativeFunction {
             NativeFunction::LogInfo => "log_info",
             NativeFunction::LogError => "log_error",
             NativeFunction::HttpServe => "http_serve",
-            NativeFunction::RenderHtml => "render_html",
+            NativeFunction::Render => "render",
         }
     }
 

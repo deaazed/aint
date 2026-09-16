@@ -16,8 +16,8 @@ use crate::stdlib;
 use crate::tool::{MockTool, ToolExchange, ToolRequest, ToolSignature};
 use crate::trace::{InferenceTraceOutcome, TokenUsage, TraceRecord};
 use crate::value::{
-    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, Task, ToolBody,
-    ToolFn, Value,
+    Function, InferenceFn, NativeFunction, PendingInference, PendingToolCall, PropValue, Task,
+    ToolBody, ToolFn, Value,
 };
 
 /// Signals whether a `return` unwound out of the statement/block just
@@ -548,11 +548,14 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                 for (name, value_expr) in props {
                     let value = self.eval_expr(value_expr, env).await?;
                     match value {
-                        Value::String(s) => prop_values.push((name.clone(), s)),
+                        Value::String(s) => prop_values.push((name.clone(), PropValue::Str(s))),
+                        Value::Int(n) => prop_values.push((name.clone(), PropValue::Num(n as f64))),
+                        Value::Float(n) => prop_values.push((name.clone(), PropValue::Num(n))),
+                        Value::Bool(b) => prop_values.push((name.clone(), PropValue::Bool(b))),
                         other => {
                             return Err(RuntimeError::TypeMismatch {
                                 message: format!(
-                                    "node prop `{name}` must be a String, found a {}",
+                                    "node prop `{name}` must be a String, Int, Float, or Bool, found a {}",
                                     other.type_name()
                                 ),
                                 span: value_expr.span,
@@ -2477,163 +2480,312 @@ mod tests {
         assert!(matches!(err, RuntimeError::SchemaViolation { .. }));
     }
 
-    // --- Node / render_html (milestone 44) ---------------------------
+    // --- widgets / render (milestone 46) --------------------------------
 
     #[test]
-    fn a_node_literal_evaluates_to_a_node_value() {
+    fn a_page_compiles_to_one_complete_html_document() {
         let output = run_capturing(
             r#"import ui
-               let n = Group { Heading { "hi" } }
-               print(render_html(n))"#,
-        );
-        assert_eq!(output, "<div><h2>hi</h2></div>\n");
-    }
-
-    #[test]
-    fn node_props_become_html_attributes_and_text_is_escaped() {
-        let output = run_capturing(
-            r#"import ui
-               let n = Button { href: "/a&b" "<script>" }
-               print(render_html(n))"#,
+               print(render(Page { title: "Hi" description: "d" Text { "hi" } }))"#,
         );
         assert_eq!(
             output,
-            "<a class=\"button\" href=\"/a&amp;b\">&lt;script&gt;</a>\n"
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+             <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+             <title>Hi</title><meta name=\"description\" content=\"d\">\
+             <style>*{box-sizing:border-box;margin:0;padding:0}\
+             body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}\
+             :root{--accent:#5847d1;--background:#faf9f7;--surface:#ffffff;--text:#1b1b1f;--border:#e6e2d8;--on_accent:#ffffff}\
+             @media (prefers-color-scheme:dark){:root{--accent:#9285ff;--background:#0a0a0c;--surface:#111113;--text:#f2f1ec;--border:#1c1c1f;--on_accent:#0a0a0c}}\
+             </style></head><body><p>hi</p></body></html>\n"
         );
+    }
+
+    #[test]
+    fn text_content_is_html_escaped() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Text { "<script>" } }))"#,
+        );
+        assert!(output.contains("<p>&lt;script&gt;</p>"));
+    }
+
+    #[test]
+    fn page_title_and_description_are_html_escaped() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "A & B" description: "<x>" Text { "hi" } }))"#,
+        );
+        assert!(output.contains("<title>A &amp; B</title>"));
+        assert!(output.contains("<meta name=\"description\" content=\"&lt;x&gt;\">"));
     }
 
     #[test]
     fn a_list_of_node_child_splices_in_as_multiple_children() {
         let output = run_capturing(
             r#"import ui
-               let items = [Heading { "a" }, Heading { "b" }]
-               print(render_html(Group { items }))"#,
+               let items = [Text { "a" }, Text { "b" }]
+               print(render(Page { title: "t" description: "d" Column { items } }))"#,
         );
-        assert_eq!(output, "<div><h2>a</h2><h2>b</h2></div>\n");
+        assert!(output.contains("<p>a</p><p>b</p>"));
     }
 
     #[test]
-    fn a_role_outside_the_shorthand_renders_as_its_own_lowercased_tag() {
-        // Not every real HTML element has (or needs) a semantic
-        // shorthand role - `Section`/`Nav`/`Aside`/`Footer`-shaped
-        // roles fall through to being used directly as the tag name,
-        // found necessary migrating a real site whose CSS has bare
-        // element selectors (`section{padding:...}`) that a `<div>`
-        // substitute would silently stop matching.
+    fn identical_style_props_on_different_widgets_share_one_generated_class() {
+        // Two `Box` widgets with the same resolved styling anywhere in
+        // the tree share one generated class - the whole point of the
+        // compiler's dedup pass, not something an author asks for.
         let output = run_capturing(
             r#"import ui
-               print(render_html(Section { "x" }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Column { gap: 12
+                       Box { padding: 8 "a" }
+                       Box { padding: 8 "b" }
+                   }
+               }))"#,
         );
-        assert_eq!(output, "<section>x</section>\n");
+        assert_eq!(output.matches(".w1{padding:8px;}").count(), 1);
+        assert!(output.contains("<div class=\"w1\">a</div>"));
+        assert!(output.contains("<div class=\"w1\">b</div>"));
+        assert!(output.contains(".w2{display:flex;flex-direction:column;gap:12px;}"));
     }
 
     #[test]
-    fn a_role_with_a_trailing_digit_still_becomes_its_own_tag() {
-        // h1-h6 are real, common tag names with a digit in them - the
-        // tag-name fallback isn't letters-only, just "starts with a
-        // letter, nothing but letters and digits after."
+    fn row_compiles_to_a_flex_row_with_gap_align_and_wrap_no_unit_suffix_in_the_source() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(H4 { "Docs" }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Row { gap: 20 wrap: true align: "center" "x" }
+               }))"#,
         );
-        assert_eq!(output, "<h4>Docs</h4>\n");
+        assert!(output.contains(
+            ".w1{display:flex;flex-direction:row;gap:20px;align-items:center;flex-wrap:wrap;}"
+        ));
     }
 
     #[test]
-    fn a_role_that_does_not_look_like_a_tag_name_still_falls_back_to_a_data_role_div() {
-        // A role from a hand-written literal is always a plain
-        // identifier, but one from an `infer -> Node` response comes
-        // through unvalidated JSON - this is the safe landing spot for
-        // anything that isn't plausibly a real tag name (digits,
-        // spaces, punctuation), not an attempt to render it as one.
+    fn a_box_compiles_padding_background_and_corner_radius() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Side_Bar { "x" }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Box { padding: 16 background: "surface" corner_radius: 8 "x" }
+               }))"#,
         );
-        assert_eq!(output, "<div data-role=\"Side_Bar\">x</div>\n");
+        assert!(output.contains(".w1{padding:16px;background:var(--surface);border-radius:8px;}"));
+        assert!(output.contains("<div class=\"w1\">x</div>"));
     }
 
     #[test]
-    fn a_custom_class_prop_replaces_a_links_default_button_class() {
+    fn heading_level_selects_the_tag_and_a_default_size() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Link { href: "/" class: "wordmark" "aint" }))"#,
+               print(render(Page { title: "t" description: "d" Heading { level: 1 "AINT" } }))"#,
         );
-        assert_eq!(output, "<a class=\"wordmark\" href=\"/\">aint</a>\n");
+        assert!(output.contains(".w1{font-size:40px;font-weight:700;}"));
+        assert!(output.contains("<h1 class=\"w1\">AINT</h1>"));
     }
 
     #[test]
-    fn a_link_with_no_custom_class_keeps_the_default_button_class() {
+    fn a_button_gets_built_in_styling_when_unstyled() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Link { href: "/" "go" }))"#,
+               print(render(Page { title: "t" description: "d" Button { "Save" } }))"#,
         );
-        assert_eq!(output, "<a class=\"button\" href=\"/\">go</a>\n");
+        assert!(output.contains(
+            ".w1{padding:12px;background:var(--accent);color:var(--on_accent);border-radius:8px;border:none;cursor:pointer;font:inherit;font-weight:600;}"
+        ));
+        assert!(output.contains(".w1:hover{opacity:.88}"));
+        assert!(output.contains("<button class=\"w1\">Save</button>"));
     }
 
     #[test]
-    fn a_group_can_carry_a_custom_class_and_id() {
+    fn a_plain_link_has_no_box_styling_only_a_hover_underline() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Group { class: "wrap-wide" id: "main" "x" }))"#,
+               print(render(Page { title: "t" description: "d" Link { to: "/docs" "Docs" } }))"#,
         );
-        assert_eq!(output, "<div class=\"wrap-wide\" id=\"main\">x</div>\n");
+        assert!(output.contains(".w1{color:var(--accent);text-decoration:none;}"));
+        assert!(output.contains(".w1:hover{text-decoration:underline}"));
+        assert!(output.contains("<a class=\"w1\" href=\"/docs\">Docs</a>"));
     }
 
     #[test]
-    fn an_underscore_aria_prop_renders_as_a_hyphenated_attribute() {
+    fn a_link_with_padding_looks_like_a_button() {
+        // A navigating call-to-action isn't a separate mode/variant -
+        // it's a `Link` with the same style props `Box`/`Button` take.
         let output = run_capturing(
             r#"import ui
-               print(render_html(Span { aria_hidden: "true" "x" }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Link { to: "/try" padding: 14 background: "accent" color: "on_accent" "Try it" }
+               }))"#,
         );
-        assert_eq!(output, "<span aria-hidden=\"true\">x</span>\n");
+        assert!(output.contains("background:var(--accent)"));
+        assert!(output.contains("color:var(--on_accent)"));
+        assert!(output.contains("<a class=\"w1\" href=\"/try\">Try it</a>"));
     }
 
     #[test]
-    fn a_prop_name_outside_the_safe_allowlist_is_silently_dropped_not_emitted() {
-        // The allowlist exists specifically so an AI-generated Node
-        // (a prop name arriving via unvalidated JSON) can never turn
-        // into an arbitrary attribute - an event handler, most
-        // dangerously.
+    fn a_javascript_scheme_link_drops_the_href() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Group { onclick: "alert(1)" "x" }))"#,
+               print(render(Page { title: "t" description: "d" Link { to: "javascript:alert(1)" "click" } }))"#,
         );
-        assert_eq!(output, "<div>x</div>\n");
+        assert!(output.contains("<a class=\"w1\" href=\"\">click</a>"));
     }
 
     #[test]
-    fn a_raw_child_is_not_escaped_unlike_every_other_role() {
+    fn an_unrecognized_color_value_is_dropped_not_spliced_into_css() {
+        // The same threat model milestone 44/45's HTML renderer had to
+        // consider: a color-valued prop can come from an unvalidated
+        // `infer -> Node` response, so a malformed/adversarial value
+        // has to be safely dropped, not trusted into the generated
+        // stylesheet verbatim.
         let output = run_capturing(
             r#"import ui
-               print(render_html(Raw { "<svg><path/></svg>" }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Box { background: "red;} body{display:none" "x" }
+               }))"#,
         );
-        assert_eq!(output, "<svg><path/></svg>\n");
+        assert!(!output.contains("display:none"));
+        assert!(output.contains("<div>x</div>"));
     }
 
     #[test]
-    fn raw_composes_inside_an_ordinary_node_without_double_escaping() {
+    fn an_image_carries_src_alt_and_optional_dimensions() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Link { href: "/" Raw { "<svg></svg>" } "aint" }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Image { src: "/logo.png" alt: "logo" width: 32 height: 32 }
+               }))"#,
         );
-        assert_eq!(
-            output,
-            "<a class=\"button\" href=\"/\"><svg></svg>aint</a>\n"
-        );
+        assert!(output.contains("<img src=\"/logo.png\" alt=\"logo\" width=\"32\" height=\"32\">"));
     }
 
     #[test]
-    fn a_node_child_inside_raw_still_escapes_its_own_string_children() {
-        // `Raw` only trusts the literal text handed to it directly -
-        // a real `Node` nested inside still renders through the normal
-        // rules for its own children, so this isn't a way to disable
-        // escaping globally underneath it.
+    fn input_and_label_pair_by_id() {
         let output = run_capturing(
             r#"import ui
-               print(render_html(Raw { Paragraph { "<script>" } }))"#,
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Input { kind: "checkbox" id: "nav-toggle" }
+                       Label { target: "nav-toggle" "Menu" }
+                   }
+               }))"#,
         );
-        assert_eq!(output, "<p>&lt;script&gt;</p>\n");
+        assert!(output.contains("<input type=\"checkbox\" id=\"nav-toggle\">"));
+        assert!(output.contains("<label for=\"nav-toggle\">Menu</label>"));
+    }
+
+    #[test]
+    fn an_unrecognized_input_kind_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Input { kind: "date" } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn list_wraps_each_child_in_a_list_item() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" List { Text { "a" } Text { "b" } } }))"#,
+        );
+        assert!(output.contains("<ul class=\"w1\"><li><p>a</p></li><li><p>b</p></li></ul>"));
+    }
+
+    #[test]
+    fn spacer_gets_flex_grow_so_it_expands_inside_a_row() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Row { Text { "a" } Spacer {} Text { "b" } } }))"#,
+        );
+        assert!(output.contains(".w1{flex:1 1 auto;}"));
+        assert!(output.contains("<div class=\"w1\"></div>"));
+    }
+
+    #[test]
+    fn responsive_renders_both_branches_and_shows_exactly_one_via_media_query() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Responsive {
+                       Narrow { Text { "menu" } }
+                       Wide { Text { "full nav" } }
+                   }
+               }))"#,
+        );
+        assert!(output.contains("<div class=\"w-narrow-only\"><p>menu</p></div>"));
+        assert!(output.contains("<div class=\"w-wide-only\"><p>full nav</p></div>"));
+        assert!(output.contains(".w-wide-only{display:none}"));
+        assert!(output.contains(".w-narrow-only{display:none}"));
+    }
+
+    #[test]
+    fn a_theme_child_overrides_the_default_light_and_dark_palettes() {
+        let output = run_capturing(
+            r##"import ui
+               print(render(Page { title: "t" description: "d"
+                   Theme {
+                       Light { accent: "#ff0000" }
+                       Dark { accent: "#00ff00" }
+                   }
+                   Text { "hi" }
+               }))"##,
+        );
+        assert!(output.contains("--accent:#ff0000"));
+        assert!(output.contains("--accent:#00ff00"));
+    }
+
+    #[test]
+    fn a_theme_color_that_is_not_a_recognized_format_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Theme { Light { accent: "not-a-color" } }
+                   Text { "hi" }
+               }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn a_page_with_no_body_widget_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn render_requires_the_root_widget_to_be_a_page() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Text { "hi" }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn an_unrecognized_widget_role_is_a_render_error() {
+        // The widget vocabulary is closed - unlike milestone 44/45's
+        // generic tag-name fallback, there is no path from "a role
+        // `render` doesn't recognize" to any markup at all.
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Group { "x" } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn an_unrecognized_role_nested_inside_an_otherwise_valid_tree_is_still_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Column { Script { "x" } } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
     }
 
     #[test]
@@ -2642,27 +2794,25 @@ mod tests {
             r#"import ui
                infer tagline(topic: String) -> Node
                fn hero() -> Node {
-                   return Group {
-                       Heading { "AINT" }
+                   return Column {
+                       Heading { level: 1 "AINT" }
                        await tagline("positioning")
                    }
                }
-               print(render_html(hero()))"#,
+               print(render(Page { title: "t" description: "d" hero() }))"#,
             || {
                 crate::model::MockModel::new().mock(
                     "tagline",
                     Value::Node {
-                        role: "Paragraph".to_string(),
+                        role: "Text".to_string(),
                         props: Vec::new(),
                         children: vec![Value::String("a language that types AI".to_string())],
                     },
                 )
             },
         );
-        assert_eq!(
-            output,
-            "<div><h2>AINT</h2><p>a language that types AI</p></div>\n"
-        );
+        assert!(output.contains("<h1 class=\"w1\">AINT</h1>"));
+        assert!(output.contains("<p>a language that types AI</p>"));
     }
 
     // --- Distribution<T> / Option<T> -----------------------------------

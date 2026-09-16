@@ -822,9 +822,19 @@ impl TypeChecker {
             } => {
                 for (name, value) in props {
                     let ty = self.check_expr(value)?;
-                    if ty != Type::String {
+                    // Widened in milestone 46: a widget's own style
+                    // props need to be unit-less numbers (`padding: 24`)
+                    // and bare booleans (`wrap: true`), not CSS-flavored
+                    // strings — see `docs/milestones/46-widgets/SPEC.md`.
+                    if ty != Type::String
+                        && ty != Type::Int
+                        && ty != Type::Float
+                        && ty != Type::Bool
+                    {
                         return Err(TypeError::Mismatch {
-                            message: format!("node prop `{name}` must be a String, found {ty}"),
+                            message: format!(
+                                "node prop `{name}` must be a String, Int, Float, or Bool, found {ty}"
+                            ),
                             span: value.span,
                         });
                     }
@@ -1728,8 +1738,16 @@ mod tests {
     }
 
     #[test]
-    fn a_node_prop_must_be_a_string() {
-        let err = check("let n = Group { count: 1 }").unwrap_err();
+    fn a_node_prop_can_be_a_string_int_float_or_bool() {
+        // Widened in milestone 46 so a widget's own style props can be
+        // unit-less numbers (`padding: 24`) and bare booleans
+        // (`wrap: true`), not CSS-flavored strings.
+        assert!(check("let n = Group { pad: 24 ratio: 1.5 wrap: true label: \"x\" }").is_ok());
+    }
+
+    #[test]
+    fn a_node_prop_must_be_a_string_int_float_or_bool() {
+        let err = check("let n = Group { items: [1] }").unwrap_err();
         assert!(matches!(err, TypeError::Mismatch { .. }));
     }
 
@@ -1758,14 +1776,14 @@ mod tests {
     }
 
     #[test]
-    fn render_html_requires_node_and_returns_string() {
+    fn render_requires_node_and_returns_string() {
         assert!(check(
             "import ui\n\
              let n = Group { \"hi\" }\n\
-             print(render_html(n))"
+             print(render(n))"
         )
         .is_ok());
-        let err = check("import ui\nprint(render_html(\"not a node\"))").unwrap_err();
+        let err = check("import ui\nprint(render(\"not a node\"))").unwrap_err();
         assert!(matches!(err, TypeError::ArgumentTypeMismatch { .. }));
     }
 
