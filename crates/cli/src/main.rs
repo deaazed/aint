@@ -134,20 +134,31 @@ enum Command {
     },
     /// Rewrites an AINT project to the latest idiomatic syntax
     /// (milestone 45) — a `.an` file or a directory, walked
-    /// recursively. The deterministic half (no flag needed) is
-    /// provably behavior-preserving and needs no model; `--ai` adds
-    /// AI-assisted modernization, applied only to a file with at least
-    /// one `test` block (the only case where a real before/after
-    /// behavioral oracle exists) and only ever kept if the rewritten
-    /// file still type-checks and its tests pass identically — anything
-    /// else is discarded, the original left untouched. See
+    /// recursively (or the whole current project with `--project`).
+    /// The deterministic half (no flag needed) is provably
+    /// behavior-preserving and needs no model; `--ai` adds AI-assisted
+    /// modernization, applied only where a real before/after behavioral
+    /// oracle exists (a file's own `test` blocks, or — since a shared
+    /// library file can never carry its own — a companion file in the
+    /// batch that imports and tests it) and only ever kept if the
+    /// rewritten file *and* every other file in the batch still
+    /// type-check and their tests pass identically — anything else is
+    /// discarded, the original left untouched. See
     /// docs/milestones/45-migrate/SPEC.md.
     Migrate {
-        /// A .an file or a directory to migrate.
-        path: PathBuf,
+        /// A .an file or a directory to migrate. Omit when using
+        /// --project.
+        path: Option<PathBuf>,
+        /// Migrate the whole current project instead of an explicit
+        /// path: finds the nearest aint.toml walking up from the
+        /// current directory (the same convention a package import
+        /// already uses to find its root) and migrates everything
+        /// under it.
+        #[arg(long, conflicts_with = "path")]
+        project: bool,
         /// Also attempt AI-assisted modernization (requires
-        /// AINT_MODEL_URL) for files with test coverage to verify
-        /// against.
+        /// AINT_MODEL_URL) for files with test coverage — their own or
+        /// a companion file's — to verify against.
         #[arg(long)]
         ai: bool,
         /// Report which files would change without writing anything.
@@ -183,7 +194,12 @@ fn main() -> ExitCode {
             Command::Fmt { path, check } => fmt(&path, check),
             Command::Scaffold { description, path } => scaffold(&description, &path),
             Command::Upgrade { check } => upgrade(check),
-            Command::Migrate { path, ai, check } => migrate_cmd::migrate(&path, ai, check),
+            Command::Migrate {
+                path,
+                project,
+                ai,
+                check,
+            } => migrate_cmd::migrate(path, project, ai, check),
         })
         .expect("failed to spawn the interpreter thread")
         .join()

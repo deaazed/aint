@@ -32,6 +32,18 @@ test-verified tier into the CLI.
       keeping a rewrite (reverting and reporting a hard
       `aint-migrate`-bug failure on the — never observed — chance that
       fails).
+- [x] `--project` (mutually exclusive with `<path>`, requested directly
+      after using the command for real): finds the nearest `aint.toml`
+      walking up from the current directory and migrates everything
+      under it — `aint_loader::find_package_root` made `pub` and reused
+      as-is rather than a second implementation of "find the project
+      root." A clear error when no `aint.toml` exists above the current
+      directory; `\\?\`-prefixed verbatim paths (what `canonicalize`
+      produces on Windows) stripped for display so `--project`'s
+      narration looks like every other path `aint migrate` prints, not
+      the one oddly-formatted one. Verified against the real
+      `aint-website` project, run from a subdirectory with no manifest
+      of its own — found the root correctly.
 - [x] `--ai`: proposes a whole-file rewrite via `ChatClient`, but only
       where a real before/after behavioral oracle exists — the file's
       own test blocks, or (found by dogfooding against `aint-website`
@@ -73,17 +85,19 @@ test-verified tier into the CLI.
       non-blocking file, `aint test`'s pass/fail summary identical
       across all 36 files, zero mismatches either way. See `SPEC.md`'s
       verification section for the exact methodology.
-- [x] `crates/cli/tests/migrate.rs` (10 tests): deterministic rewrite
+- [x] `crates/cli/tests/migrate.rs` (14 tests): deterministic rewrite
       through the real binary, an already-modern file reported
       unchanged and left untouched, `--check`'s no-write/non-zero-exit
       contract, `--ai` without `AINT_MODEL_URL` failing clearly, the
       no-coverage-anywhere skip (proven via the hanging-listener
       technique above), an accepted same-file AI proposal, a
       rejected-and-reverted same-file one, directory walking, a
-      library file made eligible by a companion test file, and a
+      library file made eligible by a companion test file, a
       library-file proposal rejected specifically because it broke the
-      companion file's test — the whole-batch check's own reason for
-      existing.
+      companion file's test, `--project` finding a manifest from a
+      subdirectory, `--project` failing clearly with none anywhere
+      above, `--project`/`<path>` being mutually exclusive, and neither
+      being given at all.
 - [x] `cargo test --workspace`, `cargo clippy --workspace --all-targets`,
       and `cargo fmt --check` all clean.
 

@@ -423,13 +423,24 @@ holds two AST rewrites that are behavior-preserving by construction
 `return if { a } else { b }`, adopting milestone 38's `!` for
 boolean-literal comparisons) — re-verified by re-typechecking, not just
 trusted. `--ai` adds AI-assisted modernization, but only for a file
-with its own `test` block: the one case with a real before/after
-oracle, so a proposal is discarded unless it type-checks *and*
-reproduces every test's exact outcome. Verified against this
-project's own real `examples/` directory, not just synthetic cases —
-copied, migrated (22 of 36 files changed), `aint run`/`aint test`
-diffed byte-for-byte against the untouched original with zero
-mismatches. See `docs/milestones/45-migrate/SPEC.md`.
+with real coverage to check against — its own `test` block, or (a
+correction made necessary by `aint-loader` forbidding a `test` block in
+any imported file, found by actually attempting this against a second
+real project rather than assumed to be fine) a companion file that
+imports and tests it — so a proposal is discarded unless it
+type-checks *and* reproduces every test's exact outcome, for the
+changed file *and* every other file in the batch, since a same-file
+check alone can't see a signature change breaking an importer
+elsewhere. `--project` finds the nearest `aint.toml` walking up from
+the current directory and migrates everything under it, the same
+convention a package import already resolves against. Verified against
+this project's own real `examples/` directory (copied, migrated — 22
+of 36 files changed — `aint run`/`aint test` diffed byte-for-byte
+against the untouched original with zero mismatches) and, separately,
+against a second real, external project (`aint-website`), which is
+what actually surfaced the companion-file/whole-batch correction above
+before it ever shipped as the real behavior. See
+`docs/milestones/45-migrate/SPEC.md`.
 
 ---
 

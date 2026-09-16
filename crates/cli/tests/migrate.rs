@@ -30,6 +30,16 @@ fn run_migrate(args: &[&str], base_url: Option<&str>) -> Output {
     cmd.output().expect("failed to spawn the aint binary")
 }
 
+fn run_migrate_in(args: &[&str], cwd: &std::path::Path) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_aint"))
+        .arg("migrate")
+        .args(args)
+        .current_dir(cwd)
+        .env_remove("AINT_MODEL_URL")
+        .output()
+        .expect("failed to spawn the aint binary")
+}
+
 #[test]
 fn rewrites_an_if_return_else_return_into_a_return_if_expression() {
     let path = temp_file(
@@ -350,5 +360,80 @@ fn an_ai_proposal_that_breaks_an_importer_is_rejected_even_though_that_files_own
     assert!(
         stderr.contains("caller.an") || stderr.contains("broke"),
         "expected the rejection reason to name the broken importer, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn project_finds_the_nearest_aint_toml_and_migrates_everything_under_it() {
+    let dir = std::env::temp_dir().join(format!("aint_migrate_project_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("src")).unwrap();
+    std::fs::write(
+        dir.join("aint.toml"),
+        "[package]\nname = \"p\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("src").join("a.an"),
+        "fn f() -> Int {\nif true {\nreturn 1\n} else {\nreturn 2\n}\n}\nprint(f())\n",
+    )
+    .unwrap();
+
+    // Run from a subdirectory with no aint.toml of its own - --project
+    // must walk up to find it, the same way a package import resolves.
+    let output = run_migrate_in(&["--project"], &dir.join("src"));
+    let contents = std::fs::read_to_string(dir.join("src").join("a.an")).unwrap();
+    std::fs::remove_dir_all(&dir).ok();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(contents.contains("return if true"), "got: {contents}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1 scanned, 1 migrated, 0 unchanged"));
+}
+
+#[test]
+fn project_with_no_aint_toml_anywhere_fails_clearly() {
+    let dir = std::env::temp_dir().join(format!("aint_migrate_no_project_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.an"), "print(1)\n").unwrap();
+
+    // A bare temp directory has no aint.toml anywhere above it either
+    // (assuming the OS temp root itself doesn't), so this should fail
+    // rather than accidentally walking up into an unrelated project.
+    let output = run_migrate_in(&["--project"], &dir);
+    std::fs::remove_dir_all(&dir).ok();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("aint.toml"), "stderr: {stderr}");
+}
+
+#[test]
+fn project_and_an_explicit_path_are_mutually_exclusive() {
+    let path = temp_file("projectconflict", "print(1)\n");
+    let output = run_migrate(&["--project", path.to_str().unwrap()], None);
+    std::fs::remove_file(&path).ok();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--project") && stderr.to_lowercase().contains("path"),
+        "expected clap's conflicts_with error naming both, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn migrate_with_neither_a_path_nor_project_fails_clearly() {
+    let output = run_migrate(&[], None);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("path") || stderr.contains("required"),
+        "stderr: {stderr}"
     );
 }

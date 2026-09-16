@@ -134,6 +134,7 @@ own reasoning above). This machinery exists specifically because Tier
 
 ```
 aint migrate <path>              # deterministic only
+aint migrate --project           # migrate the whole current project
 aint migrate <path> --ai         # + AI-assisted, for files with tests
 aint migrate <path> --check      # report without writing; --ai is
                                   # skipped (verifying a proposal
@@ -141,10 +142,16 @@ aint migrate <path> --check      # report without writing; --ai is
 ```
 
 `<path>` is a `.an` file or a directory, walked recursively
-(`target`/`.git`/hidden directories excluded). Narrated per file
-(`==> scanning ...`, then what changed or why it didn't), a summary
-line at the end, `--check` exiting non-zero when anything would
-change — the same convention `aint fmt --check` already established.
+(`target`/`.git`/hidden directories excluded). `--project` (mutually
+exclusive with `<path>`) finds the nearest `aint.toml` walking up from
+the current directory — the exact convention `aint_loader::
+find_package_root` already uses to resolve a package import, exposed
+as a `pub` function and reused here rather than re-implemented — and
+migrates everything under it; a clear error if no `aint.toml` exists
+anywhere above the current directory. Narrated per file (`==> scanning
+...`, then what changed or why it didn't), a summary line at the end,
+`--check` exiting non-zero when anything would change — the same
+convention `aint fmt --check` already established.
 
 ## Verification methodology
 

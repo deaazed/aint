@@ -206,8 +206,11 @@ fn is_relative_import(path: &str) -> bool {
 
 /// Walks up from `dir` looking for the nearest ancestor containing
 /// `aint.toml` — the same "search upward for the nearest manifest"
-/// convention most package-based tools use.
-fn find_package_root(dir: &Path) -> Option<PathBuf> {
+/// convention most package-based tools use. `pub`, not just used
+/// internally for resolving a package import: `aint migrate --project`
+/// (milestone 45) reuses this exact convention rather than
+/// re-implementing "find the project root" a second way.
+pub fn find_package_root(dir: &Path) -> Option<PathBuf> {
     let mut current = dir.canonicalize().ok()?;
     loop {
         if current.join(aint_package::MANIFEST_FILE_NAME).is_file() {

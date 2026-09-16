@@ -37,8 +37,16 @@ use aint_ast::StmtKind;
 use crate::ui::{error_line, fail_line, ok_line, step, warn_line};
 use crate::{build_tokio_runtime, extract_source};
 
-pub fn migrate(path: &Path, ai: bool, check_only: bool) -> ExitCode {
-    let files = match collect_an_files(path) {
+pub fn migrate(path: Option<PathBuf>, project: bool, ai: bool, check_only: bool) -> ExitCode {
+    let target = match resolve_target(path, project) {
+        Ok(target) => target,
+        Err(message) => {
+            error_line(format!("error: {message}"));
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let files = match collect_an_files(&target) {
         Ok(files) => files,
         Err(err) => {
             error_line(format!("error: {err}"));
@@ -46,7 +54,7 @@ pub fn migrate(path: &Path, ai: bool, check_only: bool) -> ExitCode {
         }
     };
     if files.is_empty() {
-        warn_line(format!("no .an files found under {}", path.display()));
+        warn_line(format!("no .an files found under {}", target.display()));
         return ExitCode::SUCCESS;
     }
 
@@ -474,6 +482,44 @@ fn capture_test_outcomes(
         .into_iter()
         .map(|outcome| (outcome.name, outcome.result.map_err(|err| err.to_string())))
         .collect())
+}
+
+/// `--project` and an explicit `path` are mutually exclusive at the
+/// `clap` level already (`conflicts_with`); this handles the two ways
+/// *neither* was given a usable value. `--project` reuses
+/// `aint_loader::find_package_root` — the exact "walk up looking for
+/// `aint.toml`" convention a package import already resolves against,
+/// rather than a second, possibly-diverging implementation.
+fn resolve_target(path: Option<PathBuf>, project: bool) -> Result<PathBuf, String> {
+    if project {
+        let cwd = std::env::current_dir()
+            .map_err(|err| format!("could not read the current directory: {err}"))?;
+        let root = aint_loader::find_package_root(&cwd).ok_or_else(|| {
+            format!(
+                "--project found no {} in {} or any parent directory — run `aint init` first, \
+                 or pass an explicit path instead",
+                aint_package::MANIFEST_FILE_NAME,
+                cwd.display()
+            )
+        })?;
+        return Ok(strip_verbatim_prefix(root));
+    }
+    path.ok_or_else(|| "aint migrate needs either a path or --project".to_string())
+}
+
+/// `find_package_root` canonicalizes, which on Windows produces a
+/// `\\?\`-prefixed "verbatim" path — correct and fully usable, but ugly
+/// in every narration line this prints from here on. Every other path
+/// `aint migrate` prints (an explicit `path` argument, or a file found
+/// by walking) is whatever the user actually typed, so `--project`
+/// matches that instead of standing out as the one oddly-formatted one.
+/// Purely cosmetic: stripped only for display/further joining, not
+/// applied anywhere the extended-length guarantee might matter.
+fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    match path.to_str() {
+        Some(s) if s.starts_with(r"\\?\") => PathBuf::from(&s[4..]),
+        _ => path,
+    }
 }
 
 /// Every `.an` file under `path`, recursively if it's a directory —
