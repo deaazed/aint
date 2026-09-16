@@ -339,6 +339,7 @@ fn render_widget(
                     Ok(format!("<div class=\"{class}\"></div>"))
                 }
                 "Text" => Ok(wrap_tag("p", sheet, text_decls(props), None, &inner)),
+                "Code" => Ok(wrap_tag("pre", sheet, code_decls(props), None, &inner)),
                 "Heading" => Ok(render_heading(props, sheet, &inner)),
                 "Button" => Ok(wrap_tag(
                     "button",
@@ -503,6 +504,34 @@ fn text_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
     }
     if let Some(c) = str_prop(props, "color").and_then(resolve_color) {
         decls.push(("color", c));
+    }
+    decls
+}
+
+/// `Code { "multi\nline text" }` → `<pre>` — the one widget whose
+/// formatting (monospace, preserved whitespace/line breaks,
+/// horizontal scroll instead of wrapping mid-token) is fixed and
+/// built in rather than left to style props, the same way `Button`'s
+/// unstyled look is a default, not a CSS property an author names. A
+/// real UI concept (preformatted/code text), not a CSS one — no
+/// `white-space`/`font-family` value ever appears in an AINT program.
+fn code_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
+    let mut decls = vec![
+        (
+            "font-family",
+            "'JetBrains Mono','Courier New',monospace".to_string(),
+        ),
+        ("white-space", "pre-wrap".to_string()),
+        ("overflow-x", "auto".to_string()),
+    ];
+    if let Some(p) = px(props, "padding") {
+        decls.push(("padding", p));
+    }
+    if let Some(bg) = str_prop(props, "background").and_then(resolve_color) {
+        decls.push(("background", bg));
+    }
+    if let Some(r) = px(props, "corner_radius") {
+        decls.push(("border-radius", r));
     }
     decls
 }

@@ -370,7 +370,10 @@ separate mode), `Image` (`src`/`alt`/`width`/`height`), `Input`
 (`kind`/`id`/`name`/`placeholder`/`value`/`required`), `Label`
 (`target`), `List`, `Form` (`action`/`method` — a real GET/POST
 submission, not client-side interactivity, added migrating a real site
-onto this design). Every size prop is a
+onto this design), `Code` (monospace, preserved whitespace/line
+breaks, horizontal scroll — a fixed built-in look, the same way an
+unstyled `Button`'s look is a default rather than a CSS property an
+author names). Every size prop is a
 unit-less number (`padding: 24`, not `padding: "24px"`); a color prop
 is either a literal CSS color or one of the active theme's palette
 field names, resolved to `var(--...)` so the same generated class

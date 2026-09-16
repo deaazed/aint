@@ -2711,6 +2711,17 @@ mod tests {
     }
 
     #[test]
+    fn code_preserves_newlines_and_uses_a_monospace_font() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Code { "fn main() {\n    print(1)\n}" } }))"#,
+        );
+        assert!(output.contains("white-space:pre-wrap"));
+        assert!(output.contains("font-family:'JetBrains Mono','Courier New',monospace"));
+        assert!(output.contains("<pre class=\"w1\">fn main() {\n    print(1)\n}</pre>"));
+    }
+
+    #[test]
     fn an_unrecognized_input_kind_is_a_render_error() {
         let err = run_expect_err(
             r#"import ui

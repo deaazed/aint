@@ -145,6 +145,18 @@ Verified directly: `a_form_submits_a_real_get_request_carrying_a_named_
 text_input`, `a_text_inputs_value_is_html_escaped_and_a_checkbox_gets_
 no_box_styling` (`crates/runtime/src/interpreter.rs`).
 
+## Addendum — `Code`, found migrating the same real site
+
+Every code/shell example on `aint-website` is a multi-line string. A
+plain `Text`/`Box` has no way to preserve line breaks — a browser
+collapses ordinary whitespace, so a multi-line string would render as
+one run-on line. `Code { "line one\nline two" }` → `<pre>` with a
+fixed, built-in monospace/preserved-whitespace/horizontal-scroll look
+(`code_decls`) — a real UI concept (preformatted/code text), not a CSS
+one: no `white-space`/`font-family` value ever appears in an AINT
+program. Verified directly:
+`code_preserves_newlines_and_uses_a_monospace_font`.
+
 ## A design wrinkle worth naming
 
 `SPEC.md`'s own prose described `Page`'s `theme` and `Responsive`'s
