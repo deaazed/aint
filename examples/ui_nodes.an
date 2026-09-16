@@ -29,7 +29,12 @@ test "a hand-authored tree and an AI-generated node compose and render together"
     assert render_html(page) == "<div><h2>AINT</h2><div><p>a language that types AI, not just calls it</p></div></div>"
 }
 
-test "an unrecognized role still renders, gracefully, as a labeled div" {
-    let badge = Sidebar { "beta" }
-    assert render_html(badge) == "<div data-role=\"Sidebar\">beta</div>"
+test "a role outside the shorthand renders as its own tag, gracefully" {
+    let section = Section { "beta" }
+    assert render_html(section) == "<section>beta</section>"
+}
+
+test "a role that is not a plausible tag name falls back to a labeled div" {
+    let badge = Side_Bar { "beta" }
+    assert render_html(badge) == "<div data-role=\"Side_Bar\">beta</div>"
 }

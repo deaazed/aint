@@ -115,9 +115,62 @@ literal syntax, `infer`/`tool` declarations allowed to return `Node`
   `http_serve` is the only real output surface AINT has. Nothing about
   `Value::Node`/the literal syntax encodes HTML, so this is additive
   work later, not a redesign.
-- **The role vocabulary `render_html` understands is fixed**, not
-  user-extensible. An unrecognized role still renders (gracefully), so
-  this is a real but non-blocking limitation.
+
+## Addendum — `render_html` generalized, found by migrating a real site
+
+The "fixed role vocabulary" gap listed above was real, and got closed
+directly: migrating `aint-website`'s own `layout.an` (milestone 45's
+`aint migrate`, then by hand once the AI tier hit a quota wall) onto
+`Node` literals surfaced three concrete gaps a small demo site never
+would have —
+
+- **No way to embed an already-built markup fragment.** Every string
+  child was escaped, correctly for untrusted text, but that meant a
+  `Node` tree could never faithfully compose a plain string-returning
+  helper's output (an inline SVG icon, an HTML entity like `&#8599;`)
+  as a child — escaping would turn it into visible source text. Fixed
+  with `Raw { ... }`: a deliberately, unambiguously named escape hatch
+  (the same shape React's `dangerouslySetInnerHTML` or Jinja's `|safe`
+  is) whose direct `String` children are passed through verbatim; a
+  nested real `Node` inside a `Raw` still escapes *its own* children
+  normally — `Raw` trusts exactly the text handed to it, nothing
+  beneath.
+- **No way to carry a real site's own classes/ids/aria attributes.**
+  `Button`/`Link`'s one hardcoded `class="button"` can't coexist with
+  a site's actual CSS (`class="wordmark"`, conditional `is-active`,
+  and so on). Fixed with a fixed, safe attribute allowlist (`class`,
+  `id`, `title`, `target`, `rel`, and `aria_hidden`/`aria_label`/
+  `aria_current` — spelled with an underscore since the AINT lexer's
+  identifiers can't contain a hyphen, translated to one on output) that
+  every role now accepts alongside whatever it already handles itself;
+  an explicit `class` prop replaces `Button`/`Link`'s default instead
+  of adding a second `class` attribute. Deliberately *not* arbitrary
+  prop-name-as-attribute-name pass-through: a prop name on an
+  AI-generated `Node` comes through a model's JSON response with no
+  validation, so that would be a real injection vector (an `onerror`
+  handler, say) — the allowlist bounds it to attributes that can't
+  execute anything.
+- **No way to reach a real HTML5 tag outside the shorthand.** A site's
+  CSS can have bare-element selectors (`section{padding:...}`) that a
+  `<div>` substitute silently stops matching, and real markup needs
+  `<span>`/`<nav>`/`<aside>`/`<footer>`/`<h4>` alongside the shorthand's
+  `<h2>`/`<p>`/`<div>`/`<a>`. Fixed by changing what an unrecognized
+  role does: instead of *always* becoming `<div data-role="...">`, a
+  role that's a plausible tag name (starts with an ASCII letter,
+  nothing but letters and digits after — covers `h1`-`h6`, never
+  anything with the spaces/quotes an injection would need) is used
+  directly as the tag, lowercased. Only a role that doesn't look like a
+  real tag name still falls back to the safely-escaped `data-role` div
+  — the fallback narrowed to genuinely unrecognizable input, not every
+  role outside the original eight.
+
+All three verified with real mock-HTML-string tests (interpreter.rs)
+and, more directly, by rendering an actual, complete ~22KB doc page
+from the real, converted `layout.an` end to end and inspecting it —
+head, nav, docs sidebar with the right link marked active, body
+content, footer with the mixed text/link license paragraph, closing
+tags — not just unit-level `contains` assertions. `cargo test
+--workspace`/`clippy`/`fmt --check` clean throughout.
 
 ## Explicitly out of scope
 

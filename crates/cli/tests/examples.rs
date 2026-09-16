@@ -399,7 +399,7 @@ fn ui_nodes_an_test_block_passes() {
     let output = test_aint(&example_path("ui_nodes.an"));
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("2 run, 2 passed, 0 failed"));
+    assert!(stdout.contains("3 run, 3 passed, 0 failed"));
 }
 
 /// `examples/ui_nodes.an` uses a `Node` literal (milestone 44) - the

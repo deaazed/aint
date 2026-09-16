@@ -339,9 +339,28 @@ sub-expression (`(...)`, `[...]`, a call's argument list). See
 `docs/milestones/44-ai-native-ui/SPEC.md`.
 
 `import ui` provides `render_html(node: Node) -> String` — the one
-renderer that exists, mapping a fixed set of roles to HTML markup and
-degrading an unrecognized role to `<div data-role="...">` rather than
-erroring.
+renderer that exists. A small shorthand of roles maps to specific
+markup (`Heading`→`h2`, `Paragraph`→`p`, `Group`→`div`, `Button`/
+`Link`→`a`/`button`, `List`→`ul`/`li`, `Image`→`img`, `Text`→`span`);
+a role outside that set is used directly as its own tag name (lowercased)
+when it's a plausible one — starts with an ASCII letter, nothing but
+letters and digits after, which covers `h1`-`h6` and any other real
+HTML element the shorthand doesn't special-case — and only degrades to
+`<div data-role="...">` when it isn't. `Raw { ... }` is a role of its
+own: an explicit escape hatch whose direct `String` children are
+emitted verbatim, unescaped (a nested real `Node` inside still escapes
+its own children normally) — the only way to compose an already-built
+markup fragment (an SVG icon, an HTML entity) as a child without it
+being HTML-escaped like ordinary text. Every role also accepts a fixed,
+safe set of extra attributes from its props — `class`, `id`, `title`,
+`target`, `rel`, and `aria_hidden`/`aria_label`/`aria_current` (written
+with an underscore; identifiers can't contain a hyphen, so this is
+translated to one on output) — deliberately not arbitrary prop names as
+arbitrary attribute names, since an AI-generated `Node`'s prop names
+carry no validation of their own. See
+`docs/milestones/44-ai-native-ui/ACCEPTANCE.md`'s addendum for why each
+of these was added — found migrating a real site onto `Node` literals,
+not designed speculatively.
 
 ## 5. Expressions
 

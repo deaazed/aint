@@ -438,15 +438,79 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
     }
 }
 
+/// Attribute names `render_html` will pass through from a node's props
+/// onto its rendered tag, in addition to whatever a role already
+/// handles itself (`href`, `src`, `alt`). Deliberately a fixed
+/// allowlist, not every prop name a node happens to carry: a prop name
+/// on an AI-generated `Node` (from `infer -> Node`) comes through a
+/// model's JSON response with no validation of its own, so passing an
+/// arbitrary key through as an arbitrary attribute name would be a
+/// real injection vector (an `onerror`/`onclick` handler, say). Nothing
+/// here can execute script or navigate the page on its own — found
+/// necessary migrating a real, already-styled site
+/// (`aint-website`/`layout.an`) onto `Node` literals: without a way to
+/// carry a custom class through, a role's one hardcoded class (`Button`/
+/// `Link`'s `"button"`) can't coexist with a site's own CSS.
+///
+/// The `aria_*` entries are spelled with an underscore, not a hyphen —
+/// `attr_string` renders them with one, but the AINT lexer's
+/// identifiers can't contain one, so a hand-written node literal could
+/// never spell `aria-hidden: "true"` as a prop name at all otherwise.
+const SAFE_EXTRA_ATTRS: &[&str] = &[
+    "class",
+    "id",
+    "title",
+    "target",
+    "rel",
+    "aria_hidden",
+    "aria_label",
+    "aria_current",
+];
+
 /// Walks a `Value::Node` tree to an HTML string (milestone 44) — the
 /// one renderer that exists today; see `NativeFunction::RenderHtml`.
-/// `role` is an open vocabulary (`Type::Node`'s doc comment), so an
-/// unrecognized role degrades gracefully to a `<div data-role="...">`
-/// instead of erroring — this matters specifically for a role an
-/// `infer` call invented that the fixed table below doesn't know.
+/// `role` is an open vocabulary (`Type::Node`'s doc comment): a role
+/// outside the small semantic shorthand below (`Heading`, `Button`, ...)
+/// is used directly as the tag name, lowercased — `Section { ... }`
+/// renders `<section>...</section>`, `Nav { ... }` renders `<nav>
+/// ...</nav>`, and so on for any HTML element name the shorthand
+/// doesn't special-case, rather than every unrecognized role degrading
+/// to the same generic wrapper. Only when `role` doesn't look like a
+/// real tag name (anything but ASCII letters — the shape a hand-written
+/// or model-generated role should always have) does it fall back to a
+/// safely-escaped `<div data-role="...">`, so a malformed or
+/// adversarial role from an `infer -> Node` response can never inject
+/// its way out of being a plain attribute value.
 fn render_node_html(value: &Value, span: Span) -> Result<String, RuntimeError> {
     match value {
         Value::String(text) => Ok(escape_html(text)),
+        Value::Node {
+            role,
+            props: _,
+            children,
+        } if role == "Raw" => {
+            // An explicit, deliberately-named escape hatch — the same
+            // shape every real templating system needs somewhere
+            // (React's `dangerouslySetInnerHTML`, Jinja's `|safe`):
+            // without one, a Node tree can never faithfully compose an
+            // already-built markup fragment (an SVG icon from a plain
+            // string-returning helper, say) as a child, since every
+            // other role's string children are escaped on purpose.
+            // Only a direct `String` child is passed through verbatim;
+            // a nested `Node` child still renders through the normal,
+            // escaping rules for *its own* children — `Raw` trusts
+            // exactly the text handed to it, not everything beneath it.
+            // The caller is asserting that text is already safe markup;
+            // `render_html` has no way to verify that itself.
+            let mut raw = String::new();
+            for child in children {
+                match child {
+                    Value::String(text) => raw.push_str(text),
+                    _ => raw.push_str(&render_node_html(child, span)?),
+                }
+            }
+            Ok(raw)
+        }
         Value::Node {
             role,
             props,
@@ -462,27 +526,41 @@ fn render_node_html(value: &Value, span: Span) -> Result<String, RuntimeError> {
                     .find(|(k, _)| k == name)
                     .map(|(_, v)| escape_html(v))
             };
+            // Every role accepts the same safe extra attributes
+            // (`class`, `id`, `aria-*`, ...) on top of whatever it
+            // handles itself — computed once, reused by every arm.
+            let extra = attr_string(props);
             Ok(match role.as_str() {
-                "Heading" => format!("<h2>{}</h2>", rendered.concat()),
-                "Text" => format!("<span>{}</span>", rendered.concat()),
-                "Paragraph" => format!("<p>{}</p>", rendered.concat()),
-                "Group" => format!("<div>{}</div>", rendered.concat()),
-                "Button" | "Link" => match prop("href") {
-                    Some(href) => format!(
-                        "<a class=\"button\" href=\"{href}\">{}</a>",
-                        rendered.concat()
-                    ),
-                    None => format!("<button>{}</button>", rendered.concat()),
-                },
+                "Heading" => format!("<h2{extra}>{}</h2>", rendered.concat()),
+                "Text" => format!("<span{extra}>{}</span>", rendered.concat()),
+                "Paragraph" => format!("<p{extra}>{}</p>", rendered.concat()),
+                "Group" => format!("<div{extra}>{}</div>", rendered.concat()),
+                "Button" | "Link" => {
+                    let class = if prop("class").is_some() {
+                        String::new()
+                    } else {
+                        " class=\"button\"".to_string()
+                    };
+                    match prop("href") {
+                        Some(href) => {
+                            format!("<a{class}{extra} href=\"{href}\">{}</a>", rendered.concat())
+                        }
+                        None => format!("<button{class}{extra}>{}</button>", rendered.concat()),
+                    }
+                }
                 "List" => {
                     let items: String = rendered.iter().map(|s| format!("<li>{s}</li>")).collect();
-                    format!("<ul>{items}</ul>")
+                    format!("<ul{extra}>{items}</ul>")
                 }
                 "Image" => format!(
-                    "<img src=\"{}\" alt=\"{}\">",
+                    "<img{extra} src=\"{}\" alt=\"{}\">",
                     prop("src").unwrap_or_default(),
                     prop("alt").unwrap_or_default()
                 ),
+                other if is_plausible_tag_name(other) => {
+                    let tag = other.to_lowercase();
+                    format!("<{tag}{extra}>{}</{tag}>", rendered.concat())
+                }
                 other => format!(
                     "<div data-role=\"{}\">{}</div>",
                     escape_html(other),
@@ -495,6 +573,30 @@ fn render_node_html(value: &Value, span: Span) -> Result<String, RuntimeError> {
             span,
         }),
     }
+}
+
+/// Every `SAFE_EXTRA_ATTRS` prop present on `props`, as
+/// space-prefixed, escaped `name="value"` pairs ready to splice
+/// straight after a tag name (or after a role-specific attribute like
+/// `class`/`href`) — `""` when none are present, so every call site can
+/// use it unconditionally.
+/// Starts with an ASCII letter, everything after is ASCII
+/// alphanumeric — real tag names (`h4`, `h1` through `h6` included, not
+/// just the all-letters shape the first version of this check used),
+/// never anything with the spaces/quotes/angle-brackets an injection
+/// would need.
+fn is_plausible_tag_name(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric())
+}
+
+fn attr_string(props: &[(String, String)]) -> String {
+    props
+        .iter()
+        .filter(|(k, _)| SAFE_EXTRA_ATTRS.contains(&k.as_str()))
+        .map(|(k, v)| format!(" {}=\"{}\"", k.replace('_', "-"), escape_html(v)))
+        .collect()
 }
 
 fn escape_html(s: &str) -> String {

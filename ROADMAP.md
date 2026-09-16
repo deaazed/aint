@@ -408,6 +408,17 @@ literal) was found by breaking a real, shipped program
 with a Go-style suppression flag scoped to exactly where the ambiguity
 exists. See `docs/milestones/44-ai-native-ui/SPEC.md`.
 
+**Addendum, found migrating a real site (`aint-website`'s `layout.an`)
+onto `Node` literals**: `render_html` generalized in three ways a small
+demo site never would have surfaced — `Raw { ... }` to compose an
+already-built markup fragment (an SVG icon, an HTML entity) without it
+being escaped like ordinary text; every role accepting a fixed, safe
+attribute allowlist (`class`/`id`/`aria_*`/...) instead of one role
+having one hardcoded class; and an unrecognized role that's a
+plausible tag name (`Section`, `Nav`, `H4`, ...) rendering as that tag
+directly instead of always becoming a generic labeled div. See
+`docs/milestones/44-ai-native-ui/ACCEPTANCE.md`'s addendum.
+
 ## 45 — `aint migrate` — done
 
 Requested directly, alongside a real rate-limit wall milestone 44's own

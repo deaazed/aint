@@ -2513,12 +2513,127 @@ mod tests {
     }
 
     #[test]
-    fn an_unrecognized_role_renders_as_a_data_role_div() {
+    fn a_role_outside_the_shorthand_renders_as_its_own_lowercased_tag() {
+        // Not every real HTML element has (or needs) a semantic
+        // shorthand role - `Section`/`Nav`/`Aside`/`Footer`-shaped
+        // roles fall through to being used directly as the tag name,
+        // found necessary migrating a real site whose CSS has bare
+        // element selectors (`section{padding:...}`) that a `<div>`
+        // substitute would silently stop matching.
         let output = run_capturing(
             r#"import ui
-               print(render_html(Sidebar { "x" }))"#,
+               print(render_html(Section { "x" }))"#,
         );
-        assert_eq!(output, "<div data-role=\"Sidebar\">x</div>\n");
+        assert_eq!(output, "<section>x</section>\n");
+    }
+
+    #[test]
+    fn a_role_with_a_trailing_digit_still_becomes_its_own_tag() {
+        // h1-h6 are real, common tag names with a digit in them - the
+        // tag-name fallback isn't letters-only, just "starts with a
+        // letter, nothing but letters and digits after."
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(H4 { "Docs" }))"#,
+        );
+        assert_eq!(output, "<h4>Docs</h4>\n");
+    }
+
+    #[test]
+    fn a_role_that_does_not_look_like_a_tag_name_still_falls_back_to_a_data_role_div() {
+        // A role from a hand-written literal is always a plain
+        // identifier, but one from an `infer -> Node` response comes
+        // through unvalidated JSON - this is the safe landing spot for
+        // anything that isn't plausibly a real tag name (digits,
+        // spaces, punctuation), not an attempt to render it as one.
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Side_Bar { "x" }))"#,
+        );
+        assert_eq!(output, "<div data-role=\"Side_Bar\">x</div>\n");
+    }
+
+    #[test]
+    fn a_custom_class_prop_replaces_a_links_default_button_class() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Link { href: "/" class: "wordmark" "aint" }))"#,
+        );
+        assert_eq!(output, "<a class=\"wordmark\" href=\"/\">aint</a>\n");
+    }
+
+    #[test]
+    fn a_link_with_no_custom_class_keeps_the_default_button_class() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Link { href: "/" "go" }))"#,
+        );
+        assert_eq!(output, "<a class=\"button\" href=\"/\">go</a>\n");
+    }
+
+    #[test]
+    fn a_group_can_carry_a_custom_class_and_id() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Group { class: "wrap-wide" id: "main" "x" }))"#,
+        );
+        assert_eq!(output, "<div class=\"wrap-wide\" id=\"main\">x</div>\n");
+    }
+
+    #[test]
+    fn an_underscore_aria_prop_renders_as_a_hyphenated_attribute() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Span { aria_hidden: "true" "x" }))"#,
+        );
+        assert_eq!(output, "<span aria-hidden=\"true\">x</span>\n");
+    }
+
+    #[test]
+    fn a_prop_name_outside_the_safe_allowlist_is_silently_dropped_not_emitted() {
+        // The allowlist exists specifically so an AI-generated Node
+        // (a prop name arriving via unvalidated JSON) can never turn
+        // into an arbitrary attribute - an event handler, most
+        // dangerously.
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Group { onclick: "alert(1)" "x" }))"#,
+        );
+        assert_eq!(output, "<div>x</div>\n");
+    }
+
+    #[test]
+    fn a_raw_child_is_not_escaped_unlike_every_other_role() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Raw { "<svg><path/></svg>" }))"#,
+        );
+        assert_eq!(output, "<svg><path/></svg>\n");
+    }
+
+    #[test]
+    fn raw_composes_inside_an_ordinary_node_without_double_escaping() {
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Link { href: "/" Raw { "<svg></svg>" } "aint" }))"#,
+        );
+        assert_eq!(
+            output,
+            "<a class=\"button\" href=\"/\"><svg></svg>aint</a>\n"
+        );
+    }
+
+    #[test]
+    fn a_node_child_inside_raw_still_escapes_its_own_string_children() {
+        // `Raw` only trusts the literal text handed to it directly -
+        // a real `Node` nested inside still renders through the normal
+        // rules for its own children, so this isn't a way to disable
+        // escaping globally underneath it.
+        let output = run_capturing(
+            r#"import ui
+               print(render_html(Raw { Paragraph { "<script>" } }))"#,
+        );
+        assert_eq!(output, "<p>&lt;script&gt;</p>\n");
     }
 
     #[test]
