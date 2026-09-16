@@ -159,6 +159,21 @@ ordinary style props, same as `Box`/`Text`. Verified directly:
 `code_preserves_newlines_and_uses_a_monospace_font`,
 `code_accepts_a_size_prop_like_text_and_heading_do`.
 
+## Addendum — a real bug: the theme was never applied to `body`
+
+Found reviewing `aint-website` after migrating it: `Theme` generated
+correct `:root`/`prefers-color-scheme` custom properties, but
+`Stylesheet::finish`'s fixed `body{...}` rule never referenced them —
+only `font-family`/`line-height`. Every page rendered with the
+browser's own default white background and black text everywhere
+except the specific widgets that set their own `background`/`color`
+prop, which is a real, user-visible "the styles are broken" bug, not a
+site-content issue. Fixed: `body{background:var(--background);
+color:var(--text);...}`. Verified directly:
+`body_actually_applies_the_theme_background_and_text_color`; the
+existing exact-match `a_page_compiles_to_one_complete_html_document`
+updated to match.
+
 ## A design wrinkle worth naming
 
 `SPEC.md`'s own prose described `Page`'s `theme` and `Responsive`'s

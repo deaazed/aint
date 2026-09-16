@@ -179,7 +179,7 @@ impl Stylesheet {
         let mut out = String::new();
         out.push_str("*{box-sizing:border-box;margin:0;padding:0}");
         out.push_str(
-            "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}",
+            "body{background:var(--background);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}",
         );
         out.push_str(theme_css);
         for rule in &self.rules {

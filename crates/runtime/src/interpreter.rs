@@ -2494,11 +2494,24 @@ mod tests {
              <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
              <title>Hi</title><meta name=\"description\" content=\"d\">\
              <style>*{box-sizing:border-box;margin:0;padding:0}\
-             body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}\
+             body{background:var(--background);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}\
              :root{--accent:#5847d1;--background:#faf9f7;--surface:#ffffff;--text:#1b1b1f;--border:#e6e2d8;--on_accent:#ffffff}\
              @media (prefers-color-scheme:dark){:root{--accent:#9285ff;--background:#0a0a0c;--surface:#111113;--text:#f2f1ec;--border:#1c1c1f;--on_accent:#0a0a0c}}\
              </style></head><body><p>hi</p></body></html>\n"
         );
+    }
+
+    #[test]
+    fn body_actually_applies_the_theme_background_and_text_color() {
+        // The theme's custom properties existing in `:root` isn't
+        // enough on its own - `body` has to reference them, or every
+        // page reads as unstyled (default browser white/black)
+        // wherever a widget doesn't set its own background/color.
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Text { "hi" } }))"#,
+        );
+        assert!(output.contains("body{background:var(--background);color:var(--text);"));
     }
 
     #[test]
