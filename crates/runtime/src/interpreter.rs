@@ -2605,7 +2605,7 @@ mod tests {
                print(render(Page { title: "t" description: "d" Button { "Save" } }))"#,
         );
         assert!(output.contains(
-            ".w1{padding:12px;background:var(--accent);color:var(--on_accent);border-radius:8px;border:none;cursor:pointer;font:inherit;font-weight:600;}"
+            ".w1{padding:12px;background:var(--accent);color:var(--on_accent);border-radius:8px;border:none;cursor:pointer;font:inherit;font-weight:600;text-decoration:none;}"
         ));
         assert!(output.contains(".w1:hover{opacity:.88}"));
         assert!(output.contains("<button class=\"w1\">Save</button>"));
@@ -2635,6 +2635,22 @@ mod tests {
         assert!(output.contains("background:var(--accent)"));
         assert!(output.contains("color:var(--on_accent)"));
         assert!(output.contains("<a class=\"w1\" href=\"/try\">Try it</a>"));
+    }
+
+    #[test]
+    fn a_button_styled_link_is_not_browser_default_underlined() {
+        // A real, found-by-actually-rendering-it bug: a button-looking
+        // Link is still a real <a> underneath, and a bare <a> is
+        // underlined by the browser by default - button_decls didn't
+        // set text-decoration at all, so it silently fell back to
+        // that default the moment padding/background were set.
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Link { to: "/try" padding: 14 background: "accent" "Try it" }
+               }))"#,
+        );
+        assert!(output.contains("text-decoration:none;}"));
     }
 
     #[test]

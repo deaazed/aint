@@ -582,6 +582,11 @@ fn button_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
         ("cursor", "pointer".to_string()),
         ("font", "inherit".to_string()),
         ("font-weight", "600".to_string()),
+        // A no-op on a real `<button>` (never underlined by default),
+        // but load-bearing for `Link`: once `padding`/`background` make
+        // it look like a button, it's still a real `<a>` underneath,
+        // and a bare `<a>` is underlined by the browser by default.
+        ("text-decoration", "none".to_string()),
     ]
 }
 

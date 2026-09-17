@@ -174,6 +174,22 @@ color:var(--text);...}`. Verified directly:
 existing exact-match `a_page_compiles_to_one_complete_html_document`
 updated to match.
 
+## Addendum — a real bug: a button-styled `Link` kept its browser underline
+
+Found by a second pass of actually rendering `aint-website` and
+checking computed styles: `Link { to: ... padding: ... background: ...
+}` — the button-look mechanism `SPEC.md` itself describes — still
+underlined the text, on every button-styled `Link` on the site.
+`button_decls` (shared by `Button` and a button-styled `Link`) never
+set `text-decoration` at all: a no-op for a real `<button>` (never
+underlined by default), but a real `<a>` underneath a button-styled
+`Link` still is, by default, so it silently fell back to that the
+moment `padding`/`background` were set. Fixed: `button_decls` now
+always includes `text-decoration: none`. Verified directly:
+`a_button_styled_link_is_not_browser_default_underlined`; the existing
+`a_button_gets_built_in_styling_when_unstyled` exact-match updated to
+match.
+
 ## A design wrinkle worth naming
 
 `SPEC.md`'s own prose described `Page`'s `theme` and `Responsive`'s
