@@ -357,8 +357,10 @@ and `ACCEPTANCE.md`.
 
 The widgets: `Page` (the document root — `title`/`description` props,
 an optional `Theme` child, one body child), `Theme` (`Light`/`Dark`
-palette children — `accent`/`background`/`surface`/`text`/`border`/
-`on_accent` color props), `Column`/`Row` (`gap`/`align`/`wrap`),
+palette children — `accent`/`background`/`surface`/`text`/`muted`/
+`border`/`on_accent`/`success`/`warning`/`danger` color props, the last
+four added in milestone 47 so secondary text and status color no longer
+have to borrow `border`'s), `Column`/`Row` (`gap`/`align`/`wrap`),
 `Box` (`padding`/`background`/`corner_radius`/`border`/`width`/
 `height`/`grow`), `Spacer`, `Responsive` (`Narrow`/`Wide` children,
 swapped at one fixed 720px breakpoint), `Text`/`Heading`

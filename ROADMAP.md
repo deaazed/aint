@@ -494,6 +494,23 @@ tree, not a decision about which fallback is safe. See
 `aint-website` onto this is a real, separate follow-up, the same
 sequencing milestone 44 used for its own site migration.
 
+## 47 — Theme v2: semantic & status colors — done
+
+First of a longer UI-platform roadmap handed off after `aint-website`
+was actually migrated onto milestone 46 for real: `Palette` had no slot
+for secondary/muted text, forcing `border` into double duty as both the
+hairline-divider color and the only available muted-text color — a real
+compromise documented directly in that site's own `layout.an`. Widened
+`Palette` from 6 fields to 10 (`muted` plus `success`/`warning`/
+`danger`, for a future Badge/alert widget with nothing to draw on yet)
+— `THEME_TOKENS`, the two `_default()`s, and `Palette::set` extended in
+lockstep, no special-casing anywhere else. `Theme::css()`'s single
+12-placeholder `format!` (already at the edge of hand-maintainable, and
+this milestone would have pushed it to 20) refactored to build from a
+`Palette::as_pairs()` array instead — a real reduction in mistake
+surface for the *existing* six fields too, not scope creep. See
+`docs/milestones/47-theme-v2/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category

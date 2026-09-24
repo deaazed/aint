@@ -27,13 +27,25 @@ const BREAKPOINT_PX: u32 = 720;
 /// literal color. `on_accent` is the readable-on-`accent` color (a
 /// button's label color, typically) — kept explicit rather than
 /// computed, since contrast computation is its own can of worms.
+/// `muted` (milestone 47) is a real secondary-text tone, distinct from
+/// `border` — before this, a project's only way to get dimmer-than-
+/// `text` color was to reuse the hairline-divider color for it too,
+/// a real compromise `aint-website`'s own `layout.an` had to make and
+/// document. `success`/`warning`/`danger` are status colors with no
+/// consumer yet (a future Badge/alert widget, not this milestone) but
+/// belong at the token layer regardless, the same way every other
+/// color a widget might reference does.
 const THEME_TOKENS: &[&str] = &[
     "accent",
     "background",
     "surface",
     "text",
+    "muted",
     "border",
     "on_accent",
+    "success",
+    "warning",
+    "danger",
 ];
 
 #[derive(Clone)]
@@ -42,8 +54,12 @@ struct Palette {
     background: String,
     surface: String,
     text: String,
+    muted: String,
     border: String,
     on_accent: String,
+    success: String,
+    warning: String,
+    danger: String,
 }
 
 impl Palette {
@@ -53,8 +69,12 @@ impl Palette {
             background: "#faf9f7".to_string(),
             surface: "#ffffff".to_string(),
             text: "#1b1b1f".to_string(),
+            muted: "#7c7568".to_string(),
             border: "#e6e2d8".to_string(),
             on_accent: "#ffffff".to_string(),
+            success: "#1a7f4f".to_string(),
+            warning: "#9a6400".to_string(),
+            danger: "#c02b3c".to_string(),
         }
     }
 
@@ -64,9 +84,32 @@ impl Palette {
             background: "#0a0a0c".to_string(),
             surface: "#111113".to_string(),
             text: "#f2f1ec".to_string(),
+            muted: "#9b968a".to_string(),
             border: "#1c1c1f".to_string(),
             on_accent: "#0a0a0c".to_string(),
+            success: "#3ecf7e".to_string(),
+            warning: "#facc15".to_string(),
+            danger: "#f87171".to_string(),
         }
+    }
+
+    /// `(field name, value)` for every field, in a fixed order — the
+    /// one place that order is decided; `Theme::css()` never hand-lists
+    /// fields itself, so adding a field here is the only step a future
+    /// milestone needs (plus the matching `set` arm below).
+    fn as_pairs(&self) -> [(&'static str, &str); 10] {
+        [
+            ("accent", &self.accent),
+            ("background", &self.background),
+            ("surface", &self.surface),
+            ("text", &self.text),
+            ("muted", &self.muted),
+            ("border", &self.border),
+            ("on_accent", &self.on_accent),
+            ("success", &self.success),
+            ("warning", &self.warning),
+            ("danger", &self.danger),
+        ]
     }
 
     fn set(&mut self, field: &str, color: String) -> bool {
@@ -75,8 +118,12 @@ impl Palette {
             "background" => self.background = color,
             "surface" => self.surface = color,
             "text" => self.text = color,
+            "muted" => self.muted = color,
             "border" => self.border = color,
             "on_accent" => self.on_accent = color,
+            "success" => self.success = color,
+            "warning" => self.warning = color,
+            "danger" => self.danger = color,
             _ => return false,
         }
         true
@@ -102,21 +149,17 @@ impl Theme {
     /// own `background: "accent"` compiles to `var(--accent)`, which is
     /// why the same generated class works correctly in both modes.
     fn css(&self) -> String {
+        let declarations = |palette: &Palette| -> String {
+            palette
+                .as_pairs()
+                .iter()
+                .map(|(name, value)| format!("--{name}:{value};"))
+                .collect()
+        };
         format!(
-            ":root{{--accent:{};--background:{};--surface:{};--text:{};--border:{};--on_accent:{}}}\
-             @media (prefers-color-scheme:dark){{:root{{--accent:{};--background:{};--surface:{};--text:{};--border:{};--on_accent:{}}}}}",
-            self.light.accent,
-            self.light.background,
-            self.light.surface,
-            self.light.text,
-            self.light.border,
-            self.light.on_accent,
-            self.dark.accent,
-            self.dark.background,
-            self.dark.surface,
-            self.dark.text,
-            self.dark.border,
-            self.dark.on_accent,
+            ":root{{{}}}@media (prefers-color-scheme:dark){{:root{{{}}}}}",
+            declarations(&self.light),
+            declarations(&self.dark),
         )
     }
 }

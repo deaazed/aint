@@ -2495,8 +2495,8 @@ mod tests {
              <title>Hi</title><meta name=\"description\" content=\"d\">\
              <style>*{box-sizing:border-box;margin:0;padding:0}\
              body{background:var(--background);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}\
-             :root{--accent:#5847d1;--background:#faf9f7;--surface:#ffffff;--text:#1b1b1f;--border:#e6e2d8;--on_accent:#ffffff}\
-             @media (prefers-color-scheme:dark){:root{--accent:#9285ff;--background:#0a0a0c;--surface:#111113;--text:#f2f1ec;--border:#1c1c1f;--on_accent:#0a0a0c}}\
+             :root{--accent:#5847d1;--background:#faf9f7;--surface:#ffffff;--text:#1b1b1f;--muted:#7c7568;--border:#e6e2d8;--on_accent:#ffffff;--success:#1a7f4f;--warning:#9a6400;--danger:#c02b3c;}\
+             @media (prefers-color-scheme:dark){:root{--accent:#9285ff;--background:#0a0a0c;--surface:#111113;--text:#f2f1ec;--muted:#9b968a;--border:#1c1c1f;--on_accent:#0a0a0c;--success:#3ecf7e;--warning:#facc15;--danger:#f87171;}}\
              </style></head><body><p>hi</p></body></html>\n"
         );
     }
@@ -2512,6 +2512,41 @@ mod tests {
                print(render(Page { title: "t" description: "d" Text { "hi" } }))"#,
         );
         assert!(output.contains("body{background:var(--background);color:var(--text);"));
+    }
+
+    #[test]
+    fn a_muted_or_status_color_token_resolves_like_any_other_theme_token() {
+        // milestone 47 - `muted`/`success`/`warning`/`danger` aren't
+        // special-cased anywhere; they resolve through the exact same
+        // `resolve_color`/`THEME_TOKENS` path `accent`/`text`/etc. do.
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Text { color: "muted" "caption" }
+                       Text { color: "danger" "error" }
+                   }
+               }))"#,
+        );
+        assert!(output.contains("color:var(--muted)"));
+        assert!(output.contains("color:var(--danger)"));
+    }
+
+    #[test]
+    fn a_theme_child_can_override_muted_and_status_colors() {
+        let output = run_capturing(
+            r##"import ui
+               print(render(Page { title: "t" description: "d"
+                   Theme {
+                       Light { muted: "#123456" success: "#00ff00" }
+                       Dark { muted: "#654321" }
+                   }
+                   Text { "hi" }
+               }))"##,
+        );
+        assert!(output.contains("--muted:#123456"));
+        assert!(output.contains("--success:#00ff00"));
+        assert!(output.contains("--muted:#654321"));
     }
 
     #[test]
