@@ -2550,6 +2550,52 @@ mod tests {
     }
 
     #[test]
+    fn a_named_spacing_scale_resolves_alongside_raw_numbers() {
+        // milestone 48 - purely additive: "md" resolves to the exact
+        // same pixel output a bare number would.
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Box { padding: "md" "a" }
+                       Box { padding: 16 "b" }
+                   }
+               }))"#,
+        );
+        assert!(output.contains(".w1{padding:16px;}"));
+        assert_eq!(output.matches(".w1{padding:16px;}").count(), 1);
+        assert!(output.contains("<div class=\"w1\">a</div>"));
+        assert!(output.contains("<div class=\"w1\">b</div>"));
+    }
+
+    #[test]
+    fn an_unrecognized_scale_name_is_dropped_not_an_error() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Box { padding: "huge" "x" } }))"#,
+        );
+        assert!(output.contains("<div>x</div>"));
+    }
+
+    #[test]
+    fn page_font_selects_one_of_three_closed_stacks() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" font: "mono" Text { "hi" } }))"#,
+        );
+        assert!(output.contains("font-family:'JetBrains Mono','Courier New',monospace;"));
+    }
+
+    #[test]
+    fn an_unrecognized_page_font_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" font: "comic-sans" Text { "hi" } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
     fn text_content_is_html_escaped() {
         let output = run_capturing(
             r#"import ui

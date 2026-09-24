@@ -218,12 +218,12 @@ impl Stylesheet {
         name
     }
 
-    fn finish(&self, theme_css: &str) -> String {
+    fn finish(&self, theme_css: &str, font_stack: &str) -> String {
         let mut out = String::new();
         out.push_str("*{box-sizing:border-box;margin:0;padding:0}");
-        out.push_str(
-            "body{background:var(--background);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.5}",
-        );
+        out.push_str(&format!(
+            "body{{background:var(--background);color:var(--text);font-family:{font_stack};line-height:1.5}}"
+        ));
         out.push_str(theme_css);
         for rule in &self.rules {
             out.push_str(rule);
@@ -239,6 +239,36 @@ impl Stylesheet {
         }
         out
     }
+}
+
+/// `Page { font: "..." }`'s closed vocabulary (milestone 48) — three
+/// hardcoded, safe system-font stacks, no arbitrary font string and no
+/// external URL (that needs static asset serving first, milestone 51).
+/// `"sans"` is today's existing hardcoded stack, so an unset `font`
+/// changes nothing.
+const FONT_STACKS: &[(&str, &str)] = &[
+    (
+        "sans",
+        "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+    ),
+    ("serif", "Georgia,'Times New Roman',serif"),
+    ("mono", "'JetBrains Mono','Courier New',monospace"),
+];
+
+/// Validated the same way `Input.kind` already is against
+/// `INPUT_KINDS`: a closed, real vocabulary choice, not a
+/// degrade-silently style value — an unrecognized `font` is a render
+/// error, not a silent fallback to `"sans"`.
+fn resolve_font(name: Option<&str>, span: Span) -> Result<&'static str, RuntimeError> {
+    let name = name.unwrap_or("sans");
+    FONT_STACKS
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, stack)| *stack)
+        .ok_or_else(|| RuntimeError::TypeMismatch {
+            message: format!("Page font {name:?} isn't recognized"),
+            span,
+        })
 }
 
 /// `render(page: Node) -> String` — see `NativeFunction::Render`.
@@ -263,6 +293,7 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
 
     let title = str_prop(props, "title").unwrap_or("");
     let description = str_prop(props, "description").unwrap_or("");
+    let font_stack = resolve_font(str_prop(props, "font"), span)?;
 
     let mut theme = Theme::default_theme();
     let mut body: Option<&Value> = None;
@@ -293,7 +324,7 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
 
     let mut sheet = Stylesheet::new();
     let body_html = render_widget(body, &mut sheet, span)?;
-    let css = sheet.finish(&theme.css());
+    let css = sheet.finish(&theme.css(), font_stack);
 
     Ok(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -879,8 +910,40 @@ fn flag(props: &[(String, PropValue)], name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// A named spacing scale (milestone 48), accepted anywhere a raw pixel
+/// number is: `"sm"`, not just `24`. Purely additive — resolves to the
+/// exact same `{n}px` output a bare number always has, so nothing that
+/// already used raw numbers changes meaning.
+const SPACING_SCALE: &[(&str, f64)] = &[
+    ("xs", 4.0),
+    ("sm", 8.0),
+    ("md", 16.0),
+    ("lg", 24.0),
+    ("xl", 32.0),
+    ("xxl", 48.0),
+];
+
+/// Resolves either shape a pixel-valued prop can take: a bare number,
+/// or one of `SPACING_SCALE`'s names. An unrecognized string is
+/// dropped, not an error — the same "malformed style value degrades
+/// silently" posture every other style prop already has.
+fn resolve_scale(value: &PropValue) -> Option<f64> {
+    match value {
+        PropValue::Num(n) => Some(*n),
+        PropValue::Str(s) => SPACING_SCALE
+            .iter()
+            .find(|(name, _)| name == s)
+            .map(|(_, px)| *px),
+        PropValue::Bool(_) => None,
+    }
+}
+
 fn px(props: &[(String, PropValue)], name: &str) -> Option<String> {
-    num_prop(props, name).map(|n| format!("{}px", fmt_num(n)))
+    props
+        .iter()
+        .find(|(k, _)| k == name)
+        .and_then(|(_, v)| resolve_scale(v))
+        .map(|n| format!("{}px", fmt_num(n)))
 }
 
 fn fmt_num(n: f64) -> String {

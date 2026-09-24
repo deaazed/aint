@@ -511,6 +511,19 @@ this milestone would have pushed it to 20) refactored to build from a
 surface for the *existing* six fields too, not scope creep. See
 `docs/milestones/47-theme-v2/SPEC.md` and `ACCEPTANCE.md`.
 
+## 48 — Design tokens: spacing scale + closed font choice — done
+
+Second item in the same handed-off roadmap. Two small, independent
+additions: a named spacing scale (`"xs"` through `"xxl"`) accepted
+anywhere a raw pixel number already is — `px()`, the one shared helper
+every pixel-valued style prop goes through, widened to resolve either
+shape, purely additive — and a closed `Page.font` choice
+(`"sans"`/`"serif"`/`"mono"`) replacing the single font-family literal
+`Stylesheet::finish` used to hardcode outright, validated at render
+time the same way `Input.kind` already is (unrecognized is a render
+error, not a silent fallback). See
+`docs/milestones/48-design-tokens/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category

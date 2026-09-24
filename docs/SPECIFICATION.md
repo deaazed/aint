@@ -376,13 +376,21 @@ onto this design), `Code` (monospace, preserved whitespace/line
 breaks, horizontal scroll — a fixed built-in look, the same way an
 unstyled `Button`'s look is a default rather than a CSS property an
 author names). Every size prop is a
-unit-less number (`padding: 24`, not `padding: "24px"`); a color prop
-is either a literal CSS color or one of the active theme's palette
-field names, resolved to `var(--...)` so the same generated class
-stays correct across a light/dark switch. `render` deduplicates
-identical resolved styling into one generated CSS class regardless of
-how many widgets use it — an author never writes a class name, a
-selector, or a `<style>` tag.
+unit-less number (`padding: 24`, not `padding: "24px"`) or, since
+milestone 48, one of a named spacing scale (`"xs"`/`"sm"`/`"md"`/`"lg"`/
+`"xl"`/`"xxl"`) accepted anywhere a raw number is — purely additive, an
+unrecognized name is dropped like any other malformed style value, not
+an error. A color prop is either a literal CSS color or one of the
+active theme's palette field names (`"accent"`/`"background"`/
+`"surface"`/`"text"`/`"muted"`/`"border"`/`"on_accent"`/`"success"`/
+`"warning"`/`"danger"`, the last four added in milestone 47), resolved
+to `var(--...)` so the same generated class stays correct across a
+light/dark switch. `Page` also takes a `font` prop (milestone 48) —
+one of `"sans"`/`"serif"`/`"mono"`, a closed, render-time-validated
+vocabulary like `Input.kind`, defaulting to `"sans"`. `render`
+deduplicates identical resolved styling into one generated CSS class
+regardless of how many widgets use it — an author never writes a class
+name, a selector, or a `<style>` tag.
 
 ## 5. Expressions
 
