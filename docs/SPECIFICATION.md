@@ -362,7 +362,10 @@ palette children — `accent`/`background`/`surface`/`text`/`muted`/
 four added in milestone 47 so secondary text and status color no longer
 have to borrow `border`'s), `Column`/`Row` (`gap`/`align`/`wrap`),
 `Box` (`padding`/`background`/`corner_radius`/`border`/`width`/
-`height`/`grow`), `Spacer`, `Responsive` (`Narrow`/`Wide` children,
+`height`/`max_width`/`grow`/`shadow` (0-3, clamped, milestone 49) plus
+per-side `padding_top`/`right`/`bottom`/`left` and `border_top`/
+`right`/`bottom`/`left` — deliberately no `margin`, see milestone 49's
+`SPEC.md`), `Spacer`, `Responsive` (`Narrow`/`Wide` children,
 swapped at one fixed 720px breakpoint), `Text`/`Heading`
 (`size`/`weight`/`color`/`level`), `Button`/`Link` (`to`, plus the
 same style props as `Box` — an unstyled `Button` gets a built-in

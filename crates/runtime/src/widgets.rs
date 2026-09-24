@@ -537,6 +537,42 @@ fn flex_decls(
     decls
 }
 
+/// A fixed elevation scale (milestone 49) — not arbitrary CSS. Elevation
+/// conventionally reads the same regardless of light/dark theme, so
+/// these are fixed values, not threaded through `Theme`.
+const SHADOWS: &[&str] = &[
+    "0 1px 2px rgba(0,0,0,.08)",
+    "0 4px 12px rgba(0,0,0,.12)",
+    "0 12px 32px rgba(0,0,0,.18)",
+];
+
+/// `shadow` is a style value (like `padding`), not a closed-vocabulary
+/// choice (like `Page.font`) — an out-of-range level clamps, the same
+/// way `Heading.level` already clamps its own small numeric range,
+/// rather than erroring.
+fn shadow_decl(props: &[(String, PropValue)]) -> Option<&'static str> {
+    let level = num_prop(props, "shadow")?.round().clamp(0.0, 3.0) as usize;
+    if level == 0 {
+        None
+    } else {
+        Some(SHADOWS[level - 1])
+    }
+}
+
+const PADDING_SIDES: &[(&str, &str)] = &[
+    ("padding_top", "padding-top"),
+    ("padding_right", "padding-right"),
+    ("padding_bottom", "padding-bottom"),
+    ("padding_left", "padding-left"),
+];
+
+const BORDER_SIDES: &[(&str, &str)] = &[
+    ("border_top", "border-top"),
+    ("border_right", "border-right"),
+    ("border_bottom", "border-bottom"),
+    ("border_left", "border-left"),
+];
+
 fn box_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
     let mut decls = Vec::new();
     if let Some(p) = px(props, "padding") {
@@ -557,8 +593,28 @@ fn box_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
     if let Some(h) = px(props, "height") {
         decls.push(("height", h));
     }
+    if let Some(w) = px(props, "max_width") {
+        decls.push(("max-width", w));
+    }
     if flag(props, "grow") {
         decls.push(("flex", "1 1 auto".to_string()));
+    }
+    if let Some(s) = shadow_decl(props) {
+        decls.push(("box-shadow", s.to_string()));
+    }
+    // Emitted after the uniform `padding`/`border` above so a same-rule
+    // shorthand-then-longhand collision resolves the way real CSS
+    // always does: the later, more specific declaration wins for the
+    // side it names, the other sides stay whatever the shorthand set.
+    for (prop_name, css_prop) in PADDING_SIDES {
+        if let Some(p) = px(props, prop_name) {
+            decls.push((css_prop, p));
+        }
+    }
+    for (prop_name, css_prop) in BORDER_SIDES {
+        if let Some(c) = str_prop(props, prop_name).and_then(resolve_color) {
+            decls.push((css_prop, format!("1px solid {c}")));
+        }
     }
     decls
 }

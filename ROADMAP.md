@@ -524,6 +524,20 @@ time the same way `Input.kind` already is (unrecognized is a render
 error, not a silent fallback). See
 `docs/milestones/48-design-tokens/SPEC.md` and `ACCEPTANCE.md`.
 
+## 49 — Elevation + max-width + per-side padding/border — done
+
+Third and last item in the "first bundle" the handed-off roadmap
+recommended doing together. `Box` gains `shadow` (a fixed 0-3 elevation
+scale, clamped the same way `Heading.level` already is), `max_width`
+(the real fix for a problem that file's own comments named directly:
+`width` compiles to a literal CSS `width`, with no way to cap at N px
+while still shrinking below it), and per-side `padding_top`/`right`/
+`bottom`/`left` plus `border_top`/`right`/`bottom`/`left`. Deliberately
+no `margin` — `gap`/`padding` stay the only spacing primitives, a
+permanent exclusion avoiding CSS margin-collapse, the same call
+Flutter/Compose make for the same reason. See
+`docs/milestones/49-elevation-and-spacing/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category

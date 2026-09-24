@@ -2596,6 +2596,63 @@ mod tests {
     }
 
     #[test]
+    fn shadow_maps_a_clamped_level_to_a_fixed_elevation_value() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Box { shadow: 2 "a" }
+                       Box { shadow: 99 "b" }
+                   }
+               }))"#,
+        );
+        assert!(output.contains(".w1{box-shadow:0 4px 12px rgba(0,0,0,.12);}"));
+        // 99 clamps to the top of the scale (3), same value as level 3.
+        assert!(output.contains("box-shadow:0 12px 32px rgba(0,0,0,.18);"));
+    }
+
+    #[test]
+    fn a_zero_shadow_emits_no_box_shadow_declaration_at_all() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Box { shadow: 0 "x" } }))"#,
+        );
+        assert!(!output.contains("box-shadow"));
+        assert!(output.contains("<div>x</div>"));
+    }
+
+    #[test]
+    fn max_width_emits_max_width_not_width() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Box { max_width: 640 "x" } }))"#,
+        );
+        assert!(output.contains(".w1{max-width:640px;}"));
+    }
+
+    #[test]
+    fn per_side_padding_overrides_only_that_side_of_the_uniform_shorthand() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Box { padding: 16 padding_top: 32 "x" }
+               }))"#,
+        );
+        assert!(output.contains(".w1{padding:16px;padding-top:32px;}"));
+    }
+
+    #[test]
+    fn per_side_border_resolves_color_the_same_way_the_uniform_border_does() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Box { border_bottom: "accent" "x" }
+               }))"#,
+        );
+        assert!(output.contains(".w1{border-bottom:1px solid var(--accent);}"));
+    }
+
+    #[test]
     fn text_content_is_html_escaped() {
         let output = run_capturing(
             r#"import ui
