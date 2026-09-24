@@ -381,8 +381,12 @@ unstyled `Button`'s look is a default rather than a CSS property an
 author names), `Accordion`/`AccordionItem` (`title`/`open`, compiling
 to native `<details>`/`<summary>`), `Tabs`/`Tab` (`label` — the classic
 radio-input-plus-sibling-selector CSS pattern, fully compiler-generated;
-the first tab is checked by default with no prop to choose another).
-Every size prop is a
+the first tab is checked by default with no prop to choose another),
+`ThemeToggle` (no props — a fixed pill switch that can force the page
+into dark mode via `:root:has(#w-theme-toggle:checked)`, one-directional
+only; milestone 46 dropped this deliberately as an author-facing CSS
+trick and milestone 51 reintroduced it once it was fully compiler-
+generated instead). Every size prop is a
 unit-less number (`padding: 24`, not `padding: "24px"`) or, since
 milestone 48, one of a named spacing scale (`"xs"`/`"sm"`/`"md"`/`"lg"`/
 `"xl"`/`"xxl"`) accepted anywhere a raw number is — purely additive, an

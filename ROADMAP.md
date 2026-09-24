@@ -555,6 +555,24 @@ generated class. `muted` (milestone 47) got its first real consumer,
 coloring an inactive tab label. See
 `docs/milestones/50-accordion-and-tabs/SPEC.md` and `ACCEPTANCE.md`.
 
+## 51 — `ThemeToggle`: a manual dark-mode override — done
+
+Reintroduces what milestone 46 explicitly dropped — a manual light/
+dark toggle — now justified the same way milestone 50 justified
+`Tabs`' radio-sibling-selector CSS: fully compiler-generated, not an
+author-facing trick. `Theme::css()` gained a `:root:has(#w-theme-
+toggle:checked){...dark...}` override, safe as pure CSS specificity
+(one more pseudo-class than the plain `:root`/`@media` rules it
+competes with) rather than document-order sequencing. One-directional
+by design — can force dark, can't force light from a dark system,
+the same real limitation this project's own pre-46 site had the one
+other time it shipped this exact trick. **A real finding surfaced
+along the way**: `FEEDBACK.md`'s paired "mobile-nav toggle" needed no
+new code at all — milestone 50's `Accordion` already is a zero-JS
+disclosure toggle, and `Responsive { Narrow { AccordionItem { ... } }
+Wide { ... } }` already composes a working one. See
+`docs/milestones/51-theme-toggle/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category

@@ -148,7 +148,17 @@ impl Theme {
     /// generated once per `render()` call, not per widget. A widget's
     /// own `background: "accent"` compiles to `var(--accent)`, which is
     /// why the same generated class works correctly in both modes.
-    fn css(&self) -> String {
+    ///
+    /// `manual_override` (milestone 51, set when a `ThemeToggle` was
+    /// used) appends one more block, `:root:has(#w-theme-toggle:
+    /// checked){...dark...}` — safe as pure CSS specificity, not
+    /// document-order sequencing: `:root:has(...)` has one more
+    /// pseudo-class than either the baseline `:root` rule or the
+    /// `@media` block's `:root` (a media query adds no specificity of
+    /// its own), so it always wins when it matches and has no effect
+    /// otherwise, regardless of where it sits in the stylesheet or
+    /// what the system preference says.
+    fn css(&self, manual_override: bool) -> String {
         let declarations = |palette: &Palette| -> String {
             palette
                 .as_pairs()
@@ -156,11 +166,18 @@ impl Theme {
                 .map(|(name, value)| format!("--{name}:{value};"))
                 .collect()
         };
-        format!(
+        let mut out = format!(
             ":root{{{}}}@media (prefers-color-scheme:dark){{:root{{{}}}}}",
             declarations(&self.light),
             declarations(&self.dark),
-        )
+        );
+        if manual_override {
+            out.push_str(&format!(
+                ":root:has(#w-theme-toggle:checked){{{}}}",
+                declarations(&self.dark)
+            ));
+        }
+        out
     }
 }
 
@@ -183,6 +200,7 @@ struct Stylesheet {
     next_instance_id: usize,
     used_tabs: bool,
     tab_rules: Vec<String>,
+    used_theme_toggle: bool,
 }
 
 impl Stylesheet {
@@ -195,6 +213,7 @@ impl Stylesheet {
             next_instance_id: 1,
             used_tabs: false,
             tab_rules: Vec::new(),
+            used_theme_toggle: false,
         }
     }
 
@@ -277,6 +296,14 @@ impl Stylesheet {
             for rule in &self.tab_rules {
                 out.push_str(rule);
             }
+        }
+        if self.used_theme_toggle {
+            out.push_str(
+                ".w-theme-toggle-input{position:absolute;opacity:0;pointer-events:none}\
+                 .w-theme-toggle-label{display:inline-block;width:40px;height:22px;border-radius:999px;background:var(--border);position:relative;cursor:pointer}\
+                 .w-theme-toggle-label::after{content:'';position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--surface);transition:transform .15s ease}\
+                 .w-theme-toggle-input:checked+.w-theme-toggle-label::after{transform:translateX(18px)}",
+            );
         }
         out
     }
@@ -365,7 +392,8 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
 
     let mut sheet = Stylesheet::new();
     let body_html = render_widget(body, &mut sheet, span)?;
-    let css = sheet.finish(&theme.css(), font_stack);
+    let used_theme_toggle = sheet.used_theme_toggle;
+    let css = sheet.finish(&theme.css(used_theme_toggle), font_stack);
 
     Ok(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
@@ -472,6 +500,7 @@ fn render_widget(
                 "Form" => Ok(render_form(props, &inner)),
                 "Accordion" => Ok(wrap_div(sheet, flex_decls("column", props), None, &inner)),
                 "AccordionItem" => Ok(render_accordion_item(props, sheet, &inner)),
+                "ThemeToggle" => Ok(render_theme_toggle(sheet)),
                 other => Err(RuntimeError::TypeMismatch {
                     message: format!("`{other}` isn't a widget `render` understands"),
                     span,
@@ -530,6 +559,20 @@ fn render_responsive(
     Ok(format!(
         "<div class=\"w-narrow-only\">{narrow_html}</div><div class=\"w-wide-only\">{wide_html}</div>"
     ))
+}
+
+/// `ThemeToggle {}` (milestone 51) — a fixed, no-prop-surface pill
+/// switch, the same "nothing to configure" posture `Button`'s default
+/// and `Code`'s formatting already have. The `id`/adjacency here are
+/// load-bearing, not stylistic: `Theme::css`'s `:root:has(#w-theme-
+/// toggle:checked)` override and the `:checked+.w-theme-toggle-label`
+/// CSS in `Stylesheet::finish` both depend on this exact id and this
+/// exact input-then-label sibling order.
+fn render_theme_toggle(sheet: &mut Stylesheet) -> String {
+    sheet.used_theme_toggle = true;
+    "<input type=\"checkbox\" id=\"w-theme-toggle\" class=\"w-theme-toggle-input\">\
+     <label for=\"w-theme-toggle\" class=\"w-theme-toggle-label\" aria-label=\"Toggle dark mode\"></label>"
+        .to_string()
 }
 
 /// `AccordionItem { title: "..." open: true|false ...children }` →

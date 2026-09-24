@@ -2748,6 +2748,39 @@ mod tests {
     }
 
     #[test]
+    fn theme_toggle_emits_an_adjacent_input_and_label_pair() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" ThemeToggle {} }))"#,
+        );
+        assert!(output.contains(
+            "<input type=\"checkbox\" id=\"w-theme-toggle\" class=\"w-theme-toggle-input\">\
+             <label for=\"w-theme-toggle\" class=\"w-theme-toggle-label\" aria-label=\"Toggle dark mode\"></label>"
+        ));
+    }
+
+    #[test]
+    fn theme_toggle_appends_a_root_has_checked_dark_override() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" ThemeToggle {} }))"#,
+        );
+        assert!(output.contains(
+            ":root:has(#w-theme-toggle:checked){--accent:#9285ff;--background:#0a0a0c;--surface:#111113;--text:#f2f1ec;--muted:#9b968a;--border:#1c1c1f;--on_accent:#0a0a0c;--success:#3ecf7e;--warning:#facc15;--danger:#f87171;}"
+        ));
+    }
+
+    #[test]
+    fn no_manual_override_block_is_emitted_when_theme_toggle_is_unused() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Text { "hi" } }))"#,
+        );
+        assert!(!output.contains(":has("));
+        assert!(!output.contains("w-theme-toggle"));
+    }
+
+    #[test]
     fn text_content_is_html_escaped() {
         let output = run_capturing(
             r#"import ui
