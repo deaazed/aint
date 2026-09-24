@@ -174,6 +174,15 @@ struct Stylesheet {
     rules: Vec<String>,
     next_id: usize,
     used_responsive: bool,
+    /// A second, parallel counter (milestone 50) for widgets that need
+    /// a unique *instance* id rather than a deduplicated *style*
+    /// class — `Tabs`' `#id:checked ~ selector` CSS is instance-
+    /// specific by construction, unlike every other widget's class,
+    /// which is deliberately shared whenever two widgets resolve to
+    /// identical declarations.
+    next_instance_id: usize,
+    used_tabs: bool,
+    tab_rules: Vec<String>,
 }
 
 impl Stylesheet {
@@ -183,7 +192,28 @@ impl Stylesheet {
             rules: Vec::new(),
             next_id: 1,
             used_responsive: false,
+            next_instance_id: 1,
+            used_tabs: false,
+            tab_rules: Vec::new(),
         }
+    }
+
+    fn next_instance(&mut self) -> usize {
+        let id = self.next_instance_id;
+        self.next_instance_id += 1;
+        id
+    }
+
+    /// The per-tab half of `Tabs`' CSS — see `render_tabs`. `id` is
+    /// always compiler-generated (`tabs{n}-{i}`), never derived from
+    /// any author- or model-supplied string, so there's no attribute-
+    /// selector-injection surface to guard here.
+    fn register_tab_rule(&mut self, id: &str) {
+        self.used_tabs = true;
+        self.tab_rules.push(format!(
+            "#{id}:checked~.w-tab-bar label[for=\"{id}\"]{{color:var(--text);background:var(--surface)}}\
+             #{id}:checked~#{id}-pane{{display:block}}"
+        ));
     }
 
     fn class_for(&mut self, decls: Vec<(&'static str, String)>, hover: Option<&str>) -> String {
@@ -236,6 +266,17 @@ impl Stylesheet {
                 "@media (min-width:{}px){{.w-narrow-only{{display:none}}}}",
                 BREAKPOINT_PX + 1
             ));
+        }
+        if self.used_tabs {
+            out.push_str(
+                ".w-tab-radio{position:absolute;opacity:0;pointer-events:none}\
+                 .w-tab-bar{display:flex;gap:8px;flex-wrap:wrap}\
+                 .w-tab-label{padding:10px 16px;cursor:pointer;border-radius:8px 8px 0 0;color:var(--muted)}\
+                 .w-tab-pane{display:none;padding:16px;border:1px solid var(--border);border-radius:0 8px 8px 8px}",
+            );
+            for rule in &self.tab_rules {
+                out.push_str(rule);
+            }
         }
         out
     }
@@ -394,6 +435,7 @@ fn render_widget(
         Value::Node { role, children, .. } if role == "Responsive" => {
             render_responsive(children, sheet, span)
         }
+        Value::Node { role, children, .. } if role == "Tabs" => render_tabs(children, sheet, span),
         Value::Node {
             role,
             props,
@@ -428,6 +470,8 @@ fn render_widget(
                 "Label" => Ok(render_label(props, &inner)),
                 "List" => Ok(render_list(&rendered_children, sheet)),
                 "Form" => Ok(render_form(props, &inner)),
+                "Accordion" => Ok(wrap_div(sheet, flex_decls("column", props), None, &inner)),
+                "AccordionItem" => Ok(render_accordion_item(props, sheet, &inner)),
                 other => Err(RuntimeError::TypeMismatch {
                     message: format!("`{other}` isn't a widget `render` understands"),
                     span,
@@ -485,6 +529,103 @@ fn render_responsive(
     }
     Ok(format!(
         "<div class=\"w-narrow-only\">{narrow_html}</div><div class=\"w-wide-only\">{wide_html}</div>"
+    ))
+}
+
+/// `AccordionItem { title: "..." open: true|false ...children }` →
+/// native `<details>`/`<summary>` — real HTML disclosure, free
+/// keyboard/AT support. Fixed built-in styling, same posture as
+/// `Button`'s unstyled look: no style-prop surface on the item itself.
+fn render_accordion_item(
+    props: &[(String, PropValue)],
+    sheet: &mut Stylesheet,
+    inner: &str,
+) -> String {
+    let title = str_prop(props, "title")
+        .map(escape_html)
+        .unwrap_or_default();
+    let open_attr = if flag(props, "open") { " open" } else { "" };
+    let details_class = sheet.class_for(
+        vec![
+            ("border", "1px solid var(--border)".to_string()),
+            ("border-radius", "8px".to_string()),
+            ("overflow", "hidden".to_string()),
+        ],
+        None,
+    );
+    let summary_class = sheet.class_for(
+        vec![
+            ("padding", "12px 16px".to_string()),
+            ("cursor", "pointer".to_string()),
+            ("font-weight", "600".to_string()),
+        ],
+        None,
+    );
+    let body_class = sheet.class_for(vec![("padding", "0 16px 16px".to_string())], None);
+    format!(
+        "<details class=\"{details_class}\"{open_attr}><summary class=\"{summary_class}\">{title}</summary><div class=\"{body_class}\">{inner}</div></details>"
+    )
+}
+
+/// `Tabs { Tab { label: "..." ...children } ... }` — the classic
+/// radio-input-plus-sibling-selector CSS pattern, fully compiler-
+/// generated. Needs the raw children up front (same reason
+/// `render_responsive` does) to pull each `Tab`'s `label` before
+/// rendering its own content, and to hand out a per-instance id via
+/// `Stylesheet::next_instance` — unlike every other widget's class,
+/// this CSS is instance-specific by construction, not deduplicated.
+/// The first tab is checked by default; there's no prop to choose a
+/// different one in v1.
+fn render_tabs(
+    children: &[Value],
+    sheet: &mut Stylesheet,
+    span: Span,
+) -> Result<String, RuntimeError> {
+    let instance = sheet.next_instance();
+    let group = format!("tabs{instance}");
+    let mut radios = String::new();
+    let mut labels = String::new();
+    let mut panes = String::new();
+    for (index, child) in children.iter().enumerate() {
+        let Value::Node {
+            role: child_role,
+            props: child_props,
+            children: inner_children,
+        } = child
+        else {
+            return Err(RuntimeError::TypeMismatch {
+                message: "Tabs children must be Tab widgets".to_string(),
+                span,
+            });
+        };
+        if child_role != "Tab" {
+            return Err(RuntimeError::TypeMismatch {
+                message: format!("Tabs only accepts Tab children, found {child_role}"),
+                span,
+            });
+        }
+        let label = str_prop(child_props, "label")
+            .map(escape_html)
+            .unwrap_or_default();
+        let mut rendered = String::new();
+        for inner in inner_children {
+            rendered.push_str(&render_widget(inner, sheet, span)?);
+        }
+        let id = format!("{group}-{index}");
+        let checked = if index == 0 { " checked" } else { "" };
+        radios.push_str(&format!(
+            "<input type=\"radio\" name=\"{group}\" id=\"{id}\" class=\"w-tab-radio\"{checked}>"
+        ));
+        labels.push_str(&format!(
+            "<label for=\"{id}\" class=\"w-tab-label\">{label}</label>"
+        ));
+        panes.push_str(&format!(
+            "<div id=\"{id}-pane\" class=\"w-tab-pane\">{rendered}</div>"
+        ));
+        sheet.register_tab_rule(&id);
+    }
+    Ok(format!(
+        "<div class=\"w-tabs\">{radios}<div class=\"w-tab-bar\">{labels}</div>{panes}</div>"
     ))
 }
 

@@ -378,7 +378,11 @@ submission, not client-side interactivity, added migrating a real site
 onto this design), `Code` (monospace, preserved whitespace/line
 breaks, horizontal scroll — a fixed built-in look, the same way an
 unstyled `Button`'s look is a default rather than a CSS property an
-author names). Every size prop is a
+author names), `Accordion`/`AccordionItem` (`title`/`open`, compiling
+to native `<details>`/`<summary>`), `Tabs`/`Tab` (`label` — the classic
+radio-input-plus-sibling-selector CSS pattern, fully compiler-generated;
+the first tab is checked by default with no prop to choose another).
+Every size prop is a
 unit-less number (`padding: 24`, not `padding: "24px"`) or, since
 milestone 48, one of a named spacing scale (`"xs"`/`"sm"`/`"md"`/`"lg"`/
 `"xl"`/`"xxl"`) accepted anywhere a raw number is — purely additive, an

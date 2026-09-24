@@ -2653,6 +2653,101 @@ mod tests {
     }
 
     #[test]
+    fn accordion_item_compiles_to_native_details_and_summary() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Accordion {
+                       AccordionItem { title: "Q1" Text { "A1" } }
+                       AccordionItem { title: "Q2" open: true Text { "A2" } }
+                   }
+               }))"#,
+        );
+        assert!(output.contains("<summary"));
+        assert!(output.contains(">Q1</summary>"));
+        assert!(output.contains(">Q2</summary>"));
+        // Only the second item was given `open: true`.
+        assert_eq!(output.matches(" open>").count(), 1);
+        assert!(output.contains("<details class=\"w1\" open>"));
+        assert!(output.contains("A1"));
+        assert!(output.contains("A2"));
+    }
+
+    #[test]
+    fn accordion_reuses_columns_own_flex_layout_and_style_dedup() {
+        // Accordion is Column in every way that matters - same
+        // flex_decls call, so it dedupes to the same generated class
+        // when it resolves to identical declarations.
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Accordion { AccordionItem { title: "Q" Text { "A" } } }
+                   }
+               }))"#,
+        );
+        assert_eq!(
+            output
+                .matches("display:flex;flex-direction:column;}")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn tabs_wires_radios_labels_and_panes_by_a_shared_generated_id() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Tabs {
+                       Tab { label: "One" Text { "content one" } }
+                       Tab { label: "Two" Text { "content two" } }
+                   }
+               }))"#,
+        );
+        // The first tab is checked by default.
+        assert!(output.contains("id=\"tabs1-0\" class=\"w-tab-radio\" checked>"));
+        assert!(output.contains("id=\"tabs1-1\" class=\"w-tab-radio\">"));
+        assert!(output.contains("<label for=\"tabs1-0\" class=\"w-tab-label\">One</label>"));
+        assert!(output.contains("<div id=\"tabs1-0-pane\" class=\"w-tab-pane\">"));
+        assert!(output.contains("content one"));
+        assert!(output.contains("content two"));
+        // The per-tab CSS rule ties each radio's :checked state to its
+        // own label and pane, by the exact same generated id.
+        assert!(output.contains(
+            "#tabs1-0:checked~.w-tab-bar label[for=\"tabs1-0\"]{color:var(--text);background:var(--surface)}"
+        ));
+        assert!(output.contains("#tabs1-0:checked~#tabs1-0-pane{display:block}"));
+        // The fixed, once-only CSS layer, including its first real use
+        // of the milestone 47 `muted` token.
+        assert!(output.contains(".w-tab-label{padding:10px 16px;cursor:pointer;border-radius:8px 8px 0 0;color:var(--muted)}"));
+    }
+
+    #[test]
+    fn two_tabs_instances_on_one_page_get_distinct_non_colliding_ids() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Tabs { Tab { label: "A" Text { "a" } } }
+                       Tabs { Tab { label: "B" Text { "b" } } }
+                   }
+               }))"#,
+        );
+        assert!(output.contains("name=\"tabs1\""));
+        assert!(output.contains("name=\"tabs2\""));
+    }
+
+    #[test]
+    fn a_non_tab_child_of_tabs_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Tabs { Text { "x" } } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
     fn text_content_is_html_escaped() {
         let output = run_capturing(
             r#"import ui

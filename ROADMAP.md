@@ -538,6 +538,23 @@ permanent exclusion avoiding CSS margin-collapse, the same call
 Flutter/Compose make for the same reason. See
 `docs/milestones/49-elevation-and-spacing/SPEC.md` and `ACCEPTANCE.md`.
 
+## 50 — Accordion + Tabs: zero-JS interactive content — done
+
+Sequenced deliberately ahead of any real client-side interactivity
+work in the handed-off roadmap (`FEEDBACK.md`'s own proposed milestone
+55, renumbered to keep this repo's milestones gap-free by completion
+order — its 50-54, static assets/SEO/Badge/Table, haven't shipped and
+keep their numbers reserved): `Accordion`/`AccordionItem` compiles to
+native `<details>`/`<summary>` (real HTML disclosure, free keyboard/AT
+support); `Tabs`/`Tab` is the classic radio-input-plus-sibling-selector
+CSS pattern, fully compiler-generated. The genuinely new piece:
+`Stylesheet` gained a second counter, independent from the existing
+class-dedup one, for `Tabs`' instance-specific `#id:checked ~ selector`
+CSS — the opposite of every other widget's deliberately *shared*
+generated class. `muted` (milestone 47) got its first real consumer,
+coloring an inactive tab label. See
+`docs/milestones/50-accordion-and-tabs/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category
