@@ -2980,6 +2980,65 @@ mod tests {
     }
 
     #[test]
+    fn page_favicon_emits_a_link_icon_tag_in_head() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" favicon: "/favicon.ico" Text { "hi" } }))"#,
+        );
+        assert!(output.contains("<link rel=\"icon\" href=\"/favicon.ico\">"));
+    }
+
+    #[test]
+    fn no_favicon_link_is_emitted_when_favicon_is_unset() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Text { "hi" } }))"#,
+        );
+        assert!(!output.contains("rel=\"icon\""));
+    }
+
+    #[test]
+    fn a_javascript_scheme_favicon_is_dropped_not_emitted() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" favicon: "javascript:alert(1)" Text { "hi" } }))"#,
+        );
+        assert!(!output.contains("rel=\"icon\""));
+    }
+
+    #[test]
+    fn font_custom_generates_a_font_face_rule_and_uses_it_with_a_sans_fallback() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" font: "custom" font_url: "/fonts/brand.woff2" Text { "hi" } }))"#,
+        );
+        assert!(
+            output.contains("@font-face{font-family:'CustomFont';src:url('/fonts/brand.woff2')}")
+        );
+        assert!(output.contains(
+            "font-family:'CustomFont',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        ));
+    }
+
+    #[test]
+    fn font_custom_with_no_font_url_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" font: "custom" Text { "hi" } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
+    fn a_font_url_that_could_break_out_of_the_generated_css_is_a_render_error() {
+        let err = run_expect_err(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" font: "custom" font_url: "')} body{display:none" Text { "hi" } }))"#,
+        );
+        assert!(matches!(err, RuntimeError::TypeMismatch { .. }));
+    }
+
+    #[test]
     fn text_content_is_html_escaped() {
         let output = run_capturing(
             r#"import ui

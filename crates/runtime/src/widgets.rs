@@ -309,11 +309,10 @@ impl Stylesheet {
     }
 }
 
-/// `Page { font: "..." }`'s closed vocabulary (milestone 48) — three
-/// hardcoded, safe system-font stacks, no arbitrary font string and no
-/// external URL (that needs static asset serving first, milestone 51).
-/// `"sans"` is today's existing hardcoded stack, so an unset `font`
-/// changes nothing.
+/// `Page { font: "..." }`'s closed vocabulary (milestone 48; gained
+/// `"custom"` in milestone 53) — three hardcoded, safe system-font
+/// stacks, no arbitrary font string. `"sans"` is today's existing
+/// hardcoded stack, so an unset `font` changes nothing.
 const FONT_STACKS: &[(&str, &str)] = &[
     (
         "sans",
@@ -323,16 +322,60 @@ const FONT_STACKS: &[(&str, &str)] = &[
     ("mono", "'JetBrains Mono','Courier New',monospace"),
 ];
 
+/// The one place `font: "custom"`'s `@font-face` needs a name — fixed,
+/// not author-configurable, the same "nothing to configure beyond what
+/// matters" posture `ThemeToggle` already has.
+const CUSTOM_FONT_FAMILY: &str = "CustomFont";
+
+/// `font_url`'s own allowlist (milestone 53) — the same class of
+/// problem `resolve_color`/`safe_asset_path` both exist for: a string
+/// that ends up spliced into generated CSS (`url('...')`), sourced
+/// from an author or, through `infer -> Node`, a model. Letters,
+/// digits, and the handful of characters a real path or URL
+/// legitimately needs — no quote, no paren, no backslash, no
+/// whitespace, nothing that could close the `url('...')` early.
+fn is_plausible_font_url(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-' | '.' | ':' | '?' | '=' | '&')
+        })
+}
+
 /// Validated the same way `Input.kind` already is against
 /// `INPUT_KINDS`: a closed, real vocabulary choice, not a
 /// degrade-silently style value — an unrecognized `font` is a render
-/// error, not a silent fallback to `"sans"`.
-fn resolve_font(name: Option<&str>, span: Span) -> Result<&'static str, RuntimeError> {
-    let name = name.unwrap_or("sans");
+/// error, not a silent fallback to `"sans"`. Returns the resolved
+/// `font-family` CSS value and, only for `"custom"`, the `@font-face`
+/// rule text to prepend to the stylesheet.
+fn resolve_font(
+    props: &[(String, PropValue)],
+    span: Span,
+) -> Result<(String, Option<String>), RuntimeError> {
+    let name = str_prop(props, "font").unwrap_or("sans");
+    if name == "custom" {
+        let url = str_prop(props, "font_url").ok_or_else(|| RuntimeError::TypeMismatch {
+            message: "Page font: \"custom\" needs a font_url prop".to_string(),
+            span,
+        })?;
+        if !is_plausible_font_url(url) {
+            return Err(RuntimeError::TypeMismatch {
+                message: format!("Page font_url {url:?} isn't a plausible path or URL"),
+                span,
+            });
+        }
+        let safe = safe_url(url).ok_or_else(|| RuntimeError::TypeMismatch {
+            message: "Page font_url can't use a javascript: scheme".to_string(),
+            span,
+        })?;
+        let face_rule =
+            format!("@font-face{{font-family:'{CUSTOM_FONT_FAMILY}';src:url('{safe}')}}");
+        let sans = FONT_STACKS[0].1;
+        return Ok((format!("'{CUSTOM_FONT_FAMILY}',{sans}"), Some(face_rule)));
+    }
     FONT_STACKS
         .iter()
         .find(|(key, _)| *key == name)
-        .map(|(_, stack)| *stack)
+        .map(|(_, stack)| (stack.to_string(), None))
         .ok_or_else(|| RuntimeError::TypeMismatch {
             message: format!("Page font {name:?} isn't recognized"),
             span,
@@ -361,7 +404,8 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
 
     let title = str_prop(props, "title").unwrap_or("");
     let description = str_prop(props, "description").unwrap_or("");
-    let font_stack = resolve_font(str_prop(props, "font"), span)?;
+    let favicon = str_prop(props, "favicon").and_then(safe_url);
+    let (font_stack, font_face_rule) = resolve_font(props, span)?;
 
     let mut theme = Theme::default_theme();
     let mut body: Option<&Value> = None;
@@ -393,12 +437,18 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
     let mut sheet = Stylesheet::new();
     let body_html = render_widget(body, &mut sheet, span)?;
     let used_theme_toggle = sheet.used_theme_toggle;
-    let css = sheet.finish(&theme.css(used_theme_toggle), font_stack);
+    let mut css = sheet.finish(&theme.css(used_theme_toggle), &font_stack);
+    if let Some(face_rule) = font_face_rule {
+        css = format!("{face_rule}{css}");
+    }
+    let favicon_link = favicon
+        .map(|url| format!("<link rel=\"icon\" href=\"{}\">", escape_html(url)))
+        .unwrap_or_default();
 
     Ok(format!(
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>{}</title><meta name=\"description\" content=\"{}\">\
+         <title>{}</title><meta name=\"description\" content=\"{}\">{favicon_link}\
          <style>{css}</style></head><body>{body_html}</body></html>",
         escape_html(title),
         escape_html(description),

@@ -398,10 +398,17 @@ active theme's palette field names (`"accent"`/`"background"`/
 to `var(--...)` so the same generated class stays correct across a
 light/dark switch. `Page` also takes a `font` prop (milestone 48) —
 one of `"sans"`/`"serif"`/`"mono"`, a closed, render-time-validated
-vocabulary like `Input.kind`, defaulting to `"sans"`. `render`
-deduplicates identical resolved styling into one generated CSS class
-regardless of how many widgets use it — an author never writes a class
-name, a selector, or a `<style>` tag.
+vocabulary like `Input.kind`, defaulting to `"sans"` — plus, since
+milestone 53, `"custom"` paired with a `font_url` prop (its own
+allowlist, guarding the generated `@font-face` rule the same way
+`resolve_color`/`safe_asset_path` guard their own injection surfaces),
+generating a real self-hosted `@font-face` with the ordinary `"sans"`
+stack appended as a fallback. `Page` also takes a `favicon` prop
+(milestone 53) — a URL, `safe_url`-checked like every other URL-shaped
+prop, emitted as `<link rel="icon">` in `<head>`. `render` deduplicates
+identical resolved styling into one generated CSS class regardless of
+how many widgets use it — an author never writes a class name, a
+selector, or a `<style>` tag.
 
 ## 5. Expressions
 

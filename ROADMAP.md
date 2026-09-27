@@ -594,6 +594,23 @@ attempt planted to reach a real file one directory above the declared
 root and confirmed never reaching it. See
 `docs/milestones/52-static-assets/SPEC.md` and `ACCEPTANCE.md`.
 
+## 53 — favicon + self-hosted fonts — done
+
+The two genuinely new pieces from a three-part handed-off proposal:
+`Page.favicon` (a `<link rel="icon">`, `safe_url`-checked like every
+other URL-shaped prop) and `font: "custom"` + `font_url` (a real
+`@font-face` rule, its own allowlist guarding the generated CSS the
+same way `resolve_color`/`safe_asset_path` guard their own injection
+surfaces, a fixed generated family name with the ordinary `"sans"`
+stack as fallback). **A third finding, not just a build**: the
+proposal's `Image`-from-local-file piece needed no code at all —
+`render` is a pure, disk-free function with no idea an HTTP server
+exists; `Image { src: "/logo.png" }` already emits exactly that, and
+milestone 52's `http_serve_assets` serving a real file there is what
+makes it resolve, purely by both sides agreeing on the same string. See
+`docs/milestones/53-favicon-and-custom-fonts/SPEC.md` and
+`ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category
