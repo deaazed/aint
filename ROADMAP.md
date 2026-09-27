@@ -611,6 +611,23 @@ makes it resolve, purely by both sides agreeing on the same string. See
 `docs/milestones/53-favicon-and-custom-fonts/SPEC.md` and
 `ACCEPTANCE.md`.
 
+## 54 — copy-to-clipboard on `Code` — done
+
+The compiler's first-ever generated JavaScript, deliberately the
+smallest possible real case — `Code { copyable: true }` wraps its
+`<pre>` in a copy button and, only if any page uses one, splices in one
+fixed `<script>` (`COPY_BUTTON_SCRIPT`, a single `const`, never built
+with interpolation, so there's no variable content to guard against
+the way every other injection surface in this roadmap has needed) right
+before `</body>`. Golden-string-tested, not just "a script tag exists
+somewhere" — exact match, confirmed emitted exactly once regardless of
+how many copyable blocks a page has. This closes out `FEEDBACK.md`'s
+own recommended "first bundle" (47-54) in full. Its milestone 61 — the
+real interactivity core — is explicitly flagged, in that same roadmap,
+as deserving its own dedicated session rather than being rushed
+alongside anything else; that's the natural next checkpoint. See
+`docs/milestones/54-copy-to-clipboard/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category

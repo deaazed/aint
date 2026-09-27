@@ -201,6 +201,10 @@ struct Stylesheet {
     used_tabs: bool,
     tab_rules: Vec<String>,
     used_theme_toggle: bool,
+    /// Milestone 54 — gates both a fixed CSS block (here) and, unlike
+    /// every other `used_*` flag, a fixed `<script>` block `render`
+    /// splices into the document itself, not the stylesheet.
+    used_copy_button: bool,
 }
 
 impl Stylesheet {
@@ -214,6 +218,7 @@ impl Stylesheet {
             used_tabs: false,
             tab_rules: Vec::new(),
             used_theme_toggle: false,
+            used_copy_button: false,
         }
     }
 
@@ -305,6 +310,13 @@ impl Stylesheet {
                  .w-theme-toggle-input:checked+.w-theme-toggle-label::after{transform:translateX(18px)}",
             );
         }
+        if self.used_copy_button {
+            out.push_str(
+                ".w-code-wrap{position:relative}\
+                 .w-code-copy{position:absolute;top:8px;right:8px;padding:4px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);cursor:pointer}\
+                 .w-code-copy:hover{opacity:.85}",
+            );
+        }
         out
     }
 }
@@ -313,6 +325,17 @@ impl Stylesheet {
 /// `"custom"` in milestone 53) — three hardcoded, safe system-font
 /// stacks, no arbitrary font string. `"sans"` is today's existing
 /// hardcoded stack, so an unset `font` changes nothing.
+/// `Code { copyable: true }`'s script (milestone 54) — the compiler's
+/// first-ever generated JavaScript, and deliberately the smallest
+/// possible real case of one: a single fixed `const`, never built with
+/// `format!`/interpolation from anything author- or model-controlled.
+/// There's nothing to validate here the way `resolve_color`/
+/// `safe_asset_path`/`is_plausible_font_url` all have to, because
+/// there's no variable content in it at all. Reads `.textContent` off
+/// the adjacent `<pre>` — the DOM's own decoded text, not the escaped
+/// HTML source `render` produced it from.
+const COPY_BUTTON_SCRIPT: &str = "<script>document.querySelectorAll('.w-code-copy').forEach(function(b){b.addEventListener('click',function(){var text=b.previousElementSibling.textContent;navigator.clipboard.writeText(text);var original=b.textContent;b.textContent='Copied';setTimeout(function(){b.textContent=original;},1500);});});</script>";
+
 const FONT_STACKS: &[(&str, &str)] = &[
     (
         "sans",
@@ -437,6 +460,11 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
     let mut sheet = Stylesheet::new();
     let body_html = render_widget(body, &mut sheet, span)?;
     let used_theme_toggle = sheet.used_theme_toggle;
+    let copy_script = if sheet.used_copy_button {
+        COPY_BUTTON_SCRIPT
+    } else {
+        ""
+    };
     let mut css = sheet.finish(&theme.css(used_theme_toggle), &font_stack);
     if let Some(face_rule) = font_face_rule {
         css = format!("{face_rule}{css}");
@@ -449,7 +477,7 @@ pub fn render(page: &Value, span: Span) -> Result<String, RuntimeError> {
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <title>{}</title><meta name=\"description\" content=\"{}\">{favicon_link}\
-         <style>{css}</style></head><body>{body_html}</body></html>",
+         <style>{css}</style></head><body>{body_html}{copy_script}</body></html>",
         escape_html(title),
         escape_html(description),
     ))
@@ -533,7 +561,7 @@ fn render_widget(
                     Ok(format!("<div class=\"{class}\"></div>"))
                 }
                 "Text" => Ok(wrap_tag("p", sheet, text_decls(props), None, &inner)),
-                "Code" => Ok(wrap_tag("pre", sheet, code_decls(props), None, &inner)),
+                "Code" => Ok(render_code(props, sheet, &inner)),
                 "Heading" => Ok(render_heading(props, sheet, &inner)),
                 "Button" => Ok(wrap_tag(
                     "button",
@@ -901,6 +929,23 @@ fn code_decls(props: &[(String, PropValue)]) -> Vec<(&'static str, String)> {
         decls.push(("font-size", s));
     }
     decls
+}
+
+/// `Code { copyable: true ... }` (milestone 54) wraps the plain `<pre>`
+/// in a small container with a copy button — the compiler's first-
+/// ever generated JavaScript, gated by `Stylesheet.used_copy_button`
+/// the same shape `used_tabs`/`used_theme_toggle` already are, read by
+/// `render` once the tree walk completes to decide whether
+/// `COPY_BUTTON_SCRIPT` gets spliced into the document at all.
+fn render_code(props: &[(String, PropValue)], sheet: &mut Stylesheet, inner: &str) -> String {
+    let pre = wrap_tag("pre", sheet, code_decls(props), None, inner);
+    if !flag(props, "copyable") {
+        return pre;
+    }
+    sheet.used_copy_button = true;
+    format!(
+        "<div class=\"w-code-wrap\">{pre}<button type=\"button\" class=\"w-code-copy\" aria-label=\"Copy code\">Copy</button></div>"
+    )
 }
 
 fn render_heading(props: &[(String, PropValue)], sheet: &mut Stylesheet, inner: &str) -> String {

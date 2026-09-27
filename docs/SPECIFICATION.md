@@ -378,7 +378,11 @@ submission, not client-side interactivity, added migrating a real site
 onto this design), `Code` (monospace, preserved whitespace/line
 breaks, horizontal scroll — a fixed built-in look, the same way an
 unstyled `Button`'s look is a default rather than a CSS property an
-author names), `Accordion`/`AccordionItem` (`title`/`open`, compiling
+author names; `copyable: true`, milestone 54, adds a copy-to-clipboard
+button — the compiler's one and only generated `<script>`, a single
+fixed, non-templated string with no variable content, emitted at most
+once per page regardless of how many copyable blocks it has),
+`Accordion`/`AccordionItem` (`title`/`open`, compiling
 to native `<details>`/`<summary>`), `Tabs`/`Tab` (`label` — the classic
 radio-input-plus-sibling-selector CSS pattern, fully compiler-generated;
 the first tab is checked by default with no prop to choose another),

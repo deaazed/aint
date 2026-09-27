@@ -3039,6 +3039,45 @@ mod tests {
     }
 
     #[test]
+    fn a_copyable_code_block_gets_a_copy_button_wired_to_its_own_pre() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Code { copyable: true "echo hi" } }))"#,
+        );
+        assert!(output.contains(
+            "<div class=\"w-code-wrap\"><pre class=\"w1\">echo hi</pre>\
+             <button type=\"button\" class=\"w-code-copy\" aria-label=\"Copy code\">Copy</button></div>"
+        ));
+    }
+
+    #[test]
+    fn the_copy_script_is_a_fixed_golden_string_spliced_once_before_body_close() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d"
+                   Column {
+                       Code { copyable: true "one" }
+                       Code { copyable: true "two" }
+                   }
+               }))"#,
+        );
+        let script = "<script>document.querySelectorAll('.w-code-copy').forEach(function(b){b.addEventListener('click',function(){var text=b.previousElementSibling.textContent;navigator.clipboard.writeText(text);var original=b.textContent;b.textContent='Copied';setTimeout(function(){b.textContent=original;},1500);});});</script>";
+        assert_eq!(output.matches(script).count(), 1, "got: {output}");
+        assert!(output.ends_with(&format!("{script}</body></html>\n")));
+    }
+
+    #[test]
+    fn a_plain_code_block_with_no_copyable_prop_gets_no_button_or_script() {
+        let output = run_capturing(
+            r#"import ui
+               print(render(Page { title: "t" description: "d" Code { "echo hi" } }))"#,
+        );
+        assert!(!output.contains("w-code-copy"));
+        assert!(!output.contains("<script>"));
+        assert!(output.contains("<pre class=\"w1\">echo hi</pre>"));
+    }
+
+    #[test]
     fn text_content_is_html_escaped() {
         let output = run_capturing(
             r#"import ui
