@@ -324,6 +324,14 @@ pub enum NativeFunction {
     /// implemented directly on `Interpreter`, not in `stdlib::call`.
     /// See SPEC.md.
     HttpServe,
+    /// `http_serve`'s sibling (milestone 52): serves a file straight
+    /// off disk for a `GET` request under a declared local directory,
+    /// before falling through to `handle_request` unchanged for
+    /// everything else. A second, additive native rather than a wider
+    /// `http_serve` — AINT has no optional parameters, so widening the
+    /// original would have broken every existing caller. See
+    /// `docs/milestones/52-static-assets/SPEC.md`.
+    HttpServeAssets,
     /// Compiles a `Page` widget tree to a complete HTML document string
     /// (milestone 46) — the only renderer, and the only thing anything
     /// in `import ui` produces. Widgets (`Column`/`Row`/`Box`/`Text`/...)
@@ -453,17 +461,20 @@ impl NativeFunction {
             NativeFunction::LogInfo => "log_info",
             NativeFunction::LogError => "log_error",
             NativeFunction::HttpServe => "http_serve",
+            NativeFunction::HttpServeAssets => "http_serve_assets",
             NativeFunction::Render => "render",
         }
     }
 
     /// Whether calling this defers into a [`Value::Task`] instead of
-    /// running immediately. `time_sleep_ms` and `http_serve` — both
-    /// genuinely suspend on real I/O.
+    /// running immediately. `time_sleep_ms` and both `http_serve*`
+    /// natives — all genuinely suspend on real I/O.
     pub(crate) fn is_async(self) -> bool {
         matches!(
             self,
-            NativeFunction::TimeSleepMs | NativeFunction::HttpServe
+            NativeFunction::TimeSleepMs
+                | NativeFunction::HttpServe
+                | NativeFunction::HttpServeAssets
         )
     }
 }

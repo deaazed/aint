@@ -538,7 +538,7 @@ ungated.
 | `db` | `db_insert`, `db_get -> Option<String>`, `db_list -> List<String>`, `db_update`, `db_delete` — file-backed, `.aintdb/<table>.jsonl`; table names are validated against `[A-Za-z0-9_-]+` (milestone 28's security pass — a real path-traversal vulnerability existed before this check) |
 | `auth` | `auth_hash_password`/`auth_verify_password` (real `bcrypt`), `auth_generate_token` (real randomness) |
 | `log` | `log_info`, `log_error` — timestamped lines to stderr |
-| `http` | `http_serve(port)` (async) — a hand-rolled HTTP/1.1 server over a raw `TcpListener`, one connection at a time; dispatches every request to a program-defined `handle_request(method: String, path: String, body: String) -> String`; no router (see `docs/milestones/25-real-application/SPEC.md` for why) |
+| `http` | `http_serve(port)` (async) — a hand-rolled HTTP/1.1 server over a raw `TcpListener`, one connection at a time; dispatches every request to a program-defined `handle_request(method: String, path: String, body: String) -> String`; no router (see `docs/milestones/25-real-application/SPEC.md` for why). `http_serve_assets(port, asset_root)` (async, milestone 52) — the same server, plus: a `GET` request resolving safely under `asset_root` is served straight off disk (bytes and an extension-derived `Content-Type`) before `handle_request` is ever called; a second, additive native rather than a wider `http_serve`, since AINT has no optional parameters |
 | `ui` | `render(page: Node) -> String` (milestone 44; replaced in 46) — the only renderer, compiling a `Page`-rooted widget tree to one complete HTML document; see §4.10 |
 
 No `Int`/`String` conversion exists anywhere in the stdlib. `print`

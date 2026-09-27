@@ -97,7 +97,10 @@ pub fn module_bindings(module: &str) -> Option<Vec<(&'static str, NativeFunction
             ("log_info", NativeFunction::LogInfo),
             ("log_error", NativeFunction::LogError),
         ]),
-        "http" => Some(vec![("http_serve", NativeFunction::HttpServe)]),
+        "http" => Some(vec![
+            ("http_serve", NativeFunction::HttpServe),
+            ("http_serve_assets", NativeFunction::HttpServeAssets),
+        ]),
         "ui" => Some(vec![("render", NativeFunction::Render)]),
         _ => None,
     }
@@ -320,6 +323,9 @@ pub fn call(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<Valu
         NativeFunction::HttpServe => {
             unreachable!("http_serve is handled directly in Interpreter::run_async_native")
         }
+        NativeFunction::HttpServeAssets => {
+            unreachable!("http_serve_assets is handled directly in Interpreter::run_async_native")
+        }
         NativeFunction::JsonGet => {
             let [json, key] = two(native, args, span)?;
             let json = string(&json, span)?;
@@ -539,7 +545,11 @@ pub(crate) fn one(
     })
 }
 
-fn two(native: NativeFunction, args: Vec<Value>, span: Span) -> Result<[Value; 2], RuntimeError> {
+pub(crate) fn two(
+    native: NativeFunction,
+    args: Vec<Value>,
+    span: Span,
+) -> Result<[Value; 2], RuntimeError> {
     let found = args.len();
     args.try_into().map_err(|_| RuntimeError::ArityMismatch {
         name: native.name().to_string(),

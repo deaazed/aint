@@ -117,7 +117,14 @@ pub(crate) fn module_functions(module: &str) -> Option<Vec<(&'static str, Signat
             sig("log_info", vec![Type::String], Type::Unit),
             sig("log_error", vec![Type::String], Type::Unit),
         ]),
-        "http" => Some(vec![async_sig("http_serve", vec![Type::Int], Type::Unit)]),
+        "http" => Some(vec![
+            async_sig("http_serve", vec![Type::Int], Type::Unit),
+            async_sig(
+                "http_serve_assets",
+                vec![Type::Int, Type::String],
+                Type::Unit,
+            ),
+        ]),
         "ui" => Some(vec![sig("render", vec![Type::Node], Type::String)]),
         _ => None,
     }

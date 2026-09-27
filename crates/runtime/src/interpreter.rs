@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -1237,7 +1238,22 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             NativeFunction::HttpServe => {
                 let [port_value] = stdlib::one(native, args, span)?;
                 let port = stdlib::int(port_value, span)?;
-                self.http_serve(port, span).await
+                self.http_serve(port, None, span).await
+            }
+            NativeFunction::HttpServeAssets => {
+                let [port_value, asset_root_value] = stdlib::two(native, args, span)?;
+                let port = stdlib::int(port_value, span)?;
+                let asset_root = match asset_root_value {
+                    Value::String(s) => s,
+                    other => {
+                        return Err(RuntimeError::TypeMismatch {
+                            message: format!("expected String, found {}", other.type_name()),
+                            span,
+                        });
+                    }
+                };
+                self.http_serve(port, Some(Path::new(&asset_root)), span)
+                    .await
             }
             _ => unreachable!("only async natives should ever reach eval_await"),
         }
@@ -1253,7 +1269,21 @@ impl<W: Write, M: Model> Interpreter<W, M> {
     /// never is), and why there's no router (AINT has no string-
     /// splitting/regex to build one out of) — routing is just
     /// `if`/`else` inside `handle_request` itself.
-    async fn http_serve(&self, port: i64, span: Span) -> Result<Value, RuntimeError> {
+    ///
+    /// `asset_root` (milestone 52, `Some` only from `http_serve_assets`)
+    /// is checked first, `GET` requests only: a request path resolving
+    /// safely (`safe_asset_path`) to a real file under it is served
+    /// directly, bytes and an extension-derived `Content-Type`, and
+    /// `handle_request` is never called for that request. Anything that
+    /// doesn't resolve — the check fails, or no such file exists — falls
+    /// through to the exact same `handle_request` flow as when
+    /// `asset_root` is `None`, unchanged.
+    async fn http_serve(
+        &self,
+        port: i64,
+        asset_root: Option<&Path>,
+        span: Span,
+    ) -> Result<Value, RuntimeError> {
         let handler = self.globals.borrow().get("handle_request").ok_or_else(|| {
             RuntimeError::UndefinedVariable {
                 name: "handle_request".to_string(),
@@ -1276,11 +1306,25 @@ impl<W: Write, M: Model> Interpreter<W, M> {
             let (method, path, body) = match read_http_request(&mut stream).await {
                 Ok(parsed) => parsed,
                 Err(_) => {
-                    let _ = write_http_response(&mut stream, 400, "", "").await;
+                    let _ = write_http_response(&mut stream, 400, "text/plain; charset=utf-8", b"")
+                        .await;
                     continue;
                 }
             };
             let response_path = path.clone();
+
+            if method == "GET" {
+                if let Some(root) = asset_root {
+                    if let Some(file_path) = safe_asset_path(root, &path) {
+                        if let Ok(bytes) = tokio::fs::read(&file_path).await {
+                            let content_type = asset_content_type(&path);
+                            let _ =
+                                write_http_response(&mut stream, 200, content_type, &bytes).await;
+                            continue;
+                        }
+                    }
+                }
+            }
 
             let args = vec![
                 Value::String(method),
@@ -1295,18 +1339,25 @@ impl<W: Write, M: Model> Interpreter<W, M> {
 
             match result {
                 Ok(Value::String(response_body)) => {
-                    let _ =
-                        write_http_response(&mut stream, 200, &response_path, &response_body).await;
+                    let content_type = content_type_for(&response_path, &response_body);
+                    let _ = write_http_response(
+                        &mut stream,
+                        200,
+                        content_type,
+                        response_body.as_bytes(),
+                    )
+                    .await;
                 }
                 Ok(other) => {
+                    let message = format!(
+                        "handle_request must return a String, returned a {}",
+                        other.type_name()
+                    );
                     let _ = write_http_response(
                         &mut stream,
                         500,
-                        &response_path,
-                        &format!(
-                            "handle_request must return a String, returned a {}",
-                            other.type_name()
-                        ),
+                        "text/plain; charset=utf-8",
+                        message.as_bytes(),
                     )
                     .await;
                 }
@@ -1325,13 +1376,84 @@ impl<W: Write, M: Model> Interpreter<W, M> {
                     let _ = write_http_response(
                         &mut stream,
                         500,
-                        &response_path,
-                        "internal server error",
+                        "text/plain; charset=utf-8",
+                        b"internal server error",
                     )
                     .await;
                 }
             }
         }
+    }
+}
+
+/// Whether `request_path` (a raw URL path, e.g. `/favicon.ico` or
+/// `/img/logo.png?v=2`) is safe to resolve under `asset_root`, and the
+/// resolved path if so. Mirrors `db.rs`'s `valid_table_name` —
+/// "deliberately conservative rather than merely rejecting `..`" —
+/// adapted from a flat name to a hierarchical path: every segment must
+/// consist only of letters, digits, `_`, `-`, and `.` (needed here for
+/// extensions and multi-part filenames), and must not be exactly `.`
+/// or `..`. A structural guarantee, not a check against a
+/// canonicalized path afterward: a string built *only* from validated
+/// segments joined with `/` can never contain a `..` component, so
+/// `asset_root.join(relative)` can never resolve outside `asset_root`,
+/// by construction. Percent-encoded traversal (`%2e%2e%2f...`) is
+/// rejected for free, since `%` itself isn't an allowed character and
+/// `read_http_request` never decodes the path before this runs.
+fn safe_asset_path(asset_root: &Path, request_path: &str) -> Option<PathBuf> {
+    let relative = request_path
+        .split('?')
+        .next()
+        .unwrap_or(request_path)
+        .trim_start_matches('/');
+    if relative.is_empty() {
+        return None;
+    }
+    for segment in relative.split('/') {
+        let ok = segment != "."
+            && segment != ".."
+            && !segment.is_empty()
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.');
+        if !ok {
+            return None;
+        }
+    }
+    Some(asset_root.join(relative))
+}
+
+/// A static asset's `Content-Type`, by extension only — unlike
+/// `content_type_for` (used for `handle_request`'s own `String`
+/// responses), there's no body to sniff and no reason to: a real file
+/// on disk always has a real filename. Falls back to
+/// `application/octet-stream`, the correct generic default for an
+/// unrecognized binary file, not `content_type_for`'s
+/// `application/json` (which exists only to keep every pre-milestone-52
+/// JSON-API-shaped `handle_request` response unchanged).
+fn asset_content_type(path: &str) -> &'static str {
+    let file_name = path.rsplit('/').next().unwrap_or(path);
+    let extension = file_name
+        .split('?')
+        .next()
+        .unwrap_or(file_name)
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js") | Some("mjs") => "text/javascript; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
     }
 }
 
@@ -1392,26 +1514,34 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// `body` is raw bytes, not a `String` (milestone 52) — real binary
+/// content (an image, a font) is never guaranteed valid UTF-8, and
+/// `safe_asset_path`'s file-serving path needs to send exactly the
+/// bytes it read off disk. Every existing text call site passes
+/// `.as_bytes()`; content-type resolution now happens at each call
+/// site (`content_type_for` for `handle_request`'s `String` responses,
+/// `asset_content_type` for a served file) rather than inside this
+/// function, since the two need different inputs to decide.
 async fn write_http_response(
     stream: &mut TcpStream,
     status: u16,
-    path: &str,
-    body: &str,
+    content_type: &str,
+    body: &[u8],
 ) -> Result<(), String> {
     let status_text = match status {
         200 => "OK",
         400 => "Bad Request",
         _ => "Internal Server Error",
     };
-    let content_type = content_type_for(path, body);
-    let response = format!(
-        "HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+    let header = format!(
+        "HTTP/1.1 {status} {status_text}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
     stream
-        .write_all(response.as_bytes())
+        .write_all(header.as_bytes())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    stream.write_all(body).await.map_err(|e| e.to_string())
 }
 
 /// Picks a response `Content-Type` — first by `path`'s file extension
@@ -1497,6 +1627,75 @@ mod content_type_tests {
     #[test]
     fn a_malformed_request_with_an_empty_path_and_body_defaults_to_json() {
         assert_eq!(content_type_for("", ""), "application/json");
+    }
+}
+
+#[cfg(test)]
+mod static_asset_tests {
+    use super::{asset_content_type, safe_asset_path};
+    use std::path::Path;
+
+    #[test]
+    fn a_plain_request_path_resolves_under_the_asset_root() {
+        let root = Path::new("/srv/public");
+        assert_eq!(
+            safe_asset_path(root, "/favicon.ico"),
+            Some(root.join("favicon.ico"))
+        );
+        assert_eq!(
+            safe_asset_path(root, "/img/logo.png"),
+            Some(root.join("img/logo.png"))
+        );
+    }
+
+    #[test]
+    fn a_query_string_is_stripped_before_resolving() {
+        let root = Path::new("/srv/public");
+        assert_eq!(
+            safe_asset_path(root, "/logo.png?v=2"),
+            Some(root.join("logo.png"))
+        );
+    }
+
+    #[test]
+    fn a_traversal_attempt_is_rejected_however_its_spelled() {
+        let root = Path::new("/srv/public");
+        assert_eq!(safe_asset_path(root, "/../secret.txt"), None);
+        assert_eq!(safe_asset_path(root, "/../../etc/passwd"), None);
+        assert_eq!(safe_asset_path(root, "/img/../../etc/passwd"), None);
+        assert_eq!(safe_asset_path(root, "/."), None);
+        assert_eq!(safe_asset_path(root, "/.."), None);
+        // `%` isn't an allowed character, so percent-encoded traversal
+        // is rejected the same structural way, with no need to decode
+        // it first to know that.
+        assert_eq!(safe_asset_path(root, "/%2e%2e%2fetc%2fpasswd"), None);
+        // Backslash-based escape attempts never reach a real path
+        // separator either - `\` isn't allowed, same reasoning.
+        assert_eq!(safe_asset_path(root, "/..\\secret.txt"), None);
+    }
+
+    #[test]
+    fn an_empty_or_root_only_path_resolves_to_nothing() {
+        let root = Path::new("/srv/public");
+        assert_eq!(safe_asset_path(root, "/"), None);
+        assert_eq!(safe_asset_path(root, ""), None);
+    }
+
+    #[test]
+    fn asset_content_type_is_extension_only_with_an_octet_stream_default() {
+        assert_eq!(asset_content_type("/logo.png"), "image/png");
+        assert_eq!(asset_content_type("/font.woff2"), "font/woff2");
+        assert_eq!(
+            asset_content_type("/style.css?v=2"),
+            "text/css; charset=utf-8"
+        );
+        // Unlike `content_type_for`, no body-sniffing fallback exists
+        // or is needed - a real file always has a real name.
+        assert_eq!(asset_content_type("/data.bin"), "application/octet-stream");
+        assert_eq!(
+            asset_content_type("/no-extension"),
+            "application/octet-stream"
+        );
     }
 }
 

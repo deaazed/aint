@@ -573,6 +573,27 @@ disclosure toggle, and `Responsive { Narrow { AccordionItem { ... } }
 Wide { ... } }` already composes a working one. See
 `docs/milestones/51-theme-toggle/SPEC.md` and `ACCEPTANCE.md`.
 
+## 52 — Static asset serving (foundation) — done
+
+First filesystem-serving capability in the runtime — before this,
+`handle_request` was 100% responsible for every response byte, with
+zero disk access anywhere in the HTTP path, so no favicon, no
+self-hosted image or font was possible even in principle. A second,
+additive native, `http_serve_assets(port, asset_root)` — `http_serve`
+itself unchanged, since AINT has no optional parameters and widening it
+would have broken every existing caller. `safe_asset_path` mirrors
+`db.rs`'s `valid_table_name` — "deliberately conservative rather than
+merely rejecting `..`" — adapted from a flat table name to a
+hierarchical request path: every segment must be letters/digits/`_`/
+`-`/`.` only and never exactly `.` or `..`, a structural guarantee
+rather than a canonicalize-and-compare check, catching percent-encoded
+and backslash-based traversal attempts for free since neither `%` nor
+`\` is an allowed character to begin with. Verified with a real
+integration test over a genuine TCP connection, including a traversal
+attempt planted to reach a real file one directory above the declared
+root and confirmed never reaching it. See
+`docs/milestones/52-static-assets/SPEC.md` and `ACCEPTANCE.md`.
+
 ---
 
 ## Known hard problems, by category
